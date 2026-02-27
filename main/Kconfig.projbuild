@@ -745,6 +745,31 @@ config RECEIVE_CUSTOM_MESSAGE
     help
         Enable custom message reception, allow the device to receive custom messages from the server (preferably through the MQTT protocol)
 
+menu "Robot Eyes (LT168 Serial Display)"
+
+    config USE_ROBOT_EYES
+        bool "Enable LT168 Robot Eyes Display"
+        default n
+        help
+            Enable robot eyes expression display via LT168 serial screen.
+            Uses UART to communicate with LT168 display using Levetop protocol.
+
+    config ROBOT_EYES_UART_TX_PIN
+        int "UART TX GPIO pin"
+        depends on USE_ROBOT_EYES
+        default 10
+        help
+            GPIO pin number for UART TX to LT168 display.
+
+    config ROBOT_EYES_UART_BAUDRATE
+        int "UART baud rate"
+        depends on USE_ROBOT_EYES
+        default 115200
+        help
+            UART baud rate for LT168 display communication.
+
+endmenu
+
 menu "Camera Configuration"
     depends on !IDF_TARGET_ESP32
 

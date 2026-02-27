@@ -17,9 +17,9 @@ extern "C" {
 
 // ============== 引脚配置 ==============
 #define EYES_UART_NUM       UART_NUM_1
-#define EYES_UART_TX_PIN    GPIO_NUM_10   // ESP32 TX (G10) -> LT168 RX
-#define EYES_UART_RX_PIN    UART_PIN_NO_CHANGE  // 不使用RX (GPIO9已被摄像头DVP_D7占用)
-#define EYES_UART_BAUDRATE  115200
+#define EYES_UART_TX_PIN    CONFIG_ROBOT_EYES_UART_TX_PIN
+#define EYES_UART_RX_PIN    UART_PIN_NO_CHANGE
+#define EYES_UART_BAUDRATE  CONFIG_ROBOT_EYES_UART_BAUDRATE
 
 // ============== 表情定义 ==============
 typedef enum {
