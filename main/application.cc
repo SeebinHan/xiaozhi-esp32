@@ -9,6 +9,7 @@
 #include "mcp_server.h"
 #include "assets.h"
 #include "settings.h"
+#include "robot_eyes_bridge.h"
 
 #include <cstring>
 #include <esp_log.h>
@@ -311,6 +312,8 @@ void Application::HandleActivationDoneEvent() {
 
     // Play the success sound to indicate the device is ready
     audio_service_.PlaySound(Lang::Sounds::OGG_SUCCESS);
+    // 系统就绪，启动机器人眼睛
+    robot_eyes_bridge_start();
 
     // Release OTA object after activation is complete
     ota_.reset();
@@ -321,6 +324,9 @@ void Application::HandleActivationDoneEvent() {
 void Application::ActivationTask() {
     // Create OTA object for activation process
     ota_ = std::make_unique<Ota>();
+
+    // 初始化机器人眼睛 (LT168串口屏)
+    robot_eyes_bridge_init();
 
     // Check for new assets version
     CheckAssetsVersion();
@@ -558,6 +564,8 @@ void Application::InitializeProtocol() {
             if (cJSON_IsString(emotion)) {
                 Schedule([display, emotion_str = std::string(emotion->valuestring)]() {
                     display->SetEmotion(emotion_str.c_str());
+                    // 同步到机器人眼睛
+                    robot_eyes_bridge_set_emotion(emotion_str.c_str());
                 });
             }
         } else if (strcmp(type->valuestring, "mcp") == 0) {
@@ -642,6 +650,8 @@ void Application::Alert(const char* status, const char* message, const char* emo
     auto display = Board::GetInstance().GetDisplay();
     display->SetStatus(status);
     display->SetEmotion(emotion);
+    // 同步到机器人眼睛
+    robot_eyes_bridge_set_emotion(emotion);
     display->SetChatMessage("system", message);
     if (!sound.empty()) {
         audio_service_.PlaySound(sound);
@@ -653,6 +663,7 @@ void Application::DismissAlert() {
         auto display = Board::GetInstance().GetDisplay();
         display->SetStatus(Lang::Strings::STANDBY);
         display->SetEmotion("neutral");
+        robot_eyes_bridge_set_emotion("neutral");
         display->SetChatMessage("system", "");
     }
 }
@@ -846,17 +857,20 @@ void Application::HandleStateChangedEvent() {
             display->SetStatus(Lang::Strings::STANDBY);
             display->ClearChatMessages();  // Clear messages first
             display->SetEmotion("neutral"); // Then set emotion (wechat mode checks child count)
+            robot_eyes_bridge_set_emotion("neutral");
             audio_service_.EnableVoiceProcessing(false);
             audio_service_.EnableWakeWordDetection(true);
             break;
         case kDeviceStateConnecting:
             display->SetStatus(Lang::Strings::CONNECTING);
             display->SetEmotion("neutral");
+            robot_eyes_bridge_set_emotion("neutral");
             display->SetChatMessage("system", "");
             break;
         case kDeviceStateListening:
             display->SetStatus(Lang::Strings::LISTENING);
             display->SetEmotion("neutral");
+            robot_eyes_bridge_set_emotion("neutral");
 
             // Make sure the audio processor is running
             if (!audio_service_.IsAudioProcessorRunning()) {
