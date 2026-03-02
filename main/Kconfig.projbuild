@@ -873,6 +873,15 @@ menu "Camera Configuration"
             comment "For 180° rotation, use HFlip + VFlip instead of this option"
         endchoice
     endif
+
+    config USE_PROACTIVE_CAMERA_EMOTION
+        bool "Enable proactive camera emotion detection"
+        default n
+        help
+            Automatically capture and recognize facial emotion when entering
+            Listening state. Requires a camera and vision server URL to be
+            configured.
+
 endmenu
 
 menu "TAIJIPAI_S3_CONFIG"

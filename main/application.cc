@@ -14,6 +14,7 @@
 #endif
 
 #include <cstring>
+#include <thread>
 #include <esp_log.h>
 #include <cJSON.h>
 #include <driver/gpio.h>
@@ -908,6 +909,40 @@ void Application::HandleStateChangedEvent() {
             display->SetEmotion("neutral");
 #if CONFIG_USE_ROBOT_EYES
             robot_eyes_bridge_set_emotion("neutral");
+#endif
+#if CONFIG_USE_PROACTIVE_CAMERA_EMOTION
+            {
+                auto camera = board.GetCamera();
+                if (camera) {
+                    std::thread([this, camera]() {
+                        try {
+                            if (!camera->Capture()) {
+                                ESP_LOGW(TAG, "Proactive emotion: capture failed");
+                                return;
+                            }
+                            auto result = camera->Explain(
+                                "简要描述画面中人物的状态：表情、情绪、动作、环境。"
+                                "中文回答，不超过50字。没有人则回复none。");
+                            // Parse JSON response to extract "response" field
+                            cJSON* json = cJSON_Parse(result.c_str());
+                            if (json) {
+                                auto resp = cJSON_GetObjectItem(json, "response");
+                                if (cJSON_IsString(resp)) {
+                                    ESP_LOGI(TAG, "Proactive visual context: %s", resp->valuestring);
+                                    // Send visual context to server via WebSocket
+                                    std::string value = resp->valuestring;
+                                    if (value != "none" && !value.empty() && protocol_) {
+                                        protocol_->SendVisualContext(value);
+                                    }
+                                }
+                                cJSON_Delete(json);
+                            }
+                        } catch (const std::exception& e) {
+                            ESP_LOGW(TAG, "Proactive emotion error: %s", e.what());
+                        }
+                    }).detach();
+                }
+            }
 #endif
 
             // Make sure the audio processor is running
