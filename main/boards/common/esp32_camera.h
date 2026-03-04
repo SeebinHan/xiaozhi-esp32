@@ -3,6 +3,7 @@
 
 #include <lvgl.h>
 #include <thread>
+#include <mutex>
 #include <memory>
 #include <vector>
 
@@ -27,6 +28,7 @@ private:
     std::string explain_url_;
     std::string explain_token_;
     std::thread encoder_thread_;
+    std::mutex capture_mutex_;  // Serializes camera access from proactive and MCP paths
     camera_fb_t *current_fb_ = nullptr;
     uint8_t *encode_buf_ = nullptr;  // Buffer for JPEG encoding (with optional byte swap)
     size_t encode_buf_size_ = 0;
@@ -41,4 +43,5 @@ public:
     virtual bool SetVFlip(bool enabled) override;
     virtual bool SetSwapBytes(bool enabled) override;
     virtual std::string Explain(const std::string &question) override;
+    virtual std::string CaptureAndExplain(const std::string &question) override;
 };

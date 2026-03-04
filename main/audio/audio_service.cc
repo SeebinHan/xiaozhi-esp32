@@ -297,8 +297,14 @@ void AudioService::AudioOutputTask() {
 
         auto task = std::move(audio_playback_queue_.front());
         audio_playback_queue_.pop_front();
+        auto playback_remaining = audio_playback_queue_.size();
+        auto decode_remaining = audio_decode_queue_.size();
         audio_queue_cv_.notify_all();
         lock.unlock();
+
+        if (playback_remaining == 0 && decode_remaining == 0) {
+            ESP_LOGW(TAG, "[C3] Playback underrun! playback_q=0, decode_q=0, t=%ld", (long)(esp_timer_get_time() / 1000));
+        }
 
         if (!codec_->output_enabled()) {
             esp_timer_stop(audio_power_timer_);

@@ -100,9 +100,13 @@ void McpServer::AddCommonTools() {
     auto camera = board.GetCamera();
     if (camera) {
         AddTool("self.camera.take_photo",
-            "Always remember you have a camera. If the user asks you to see something, use this tool to take a photo and then explain it.\n"
-            "Args:\n"
-            "  `question`: The question that you want to ask about the photo.\n"
+            "You have a camera that can take photos. Use this tool when:\n"
+            "1. The user asks to take a photo, selfie, or wants you to capture an image\n"
+            "2. The user asks you to look at them, see them, or check their appearance\n"
+            "3. The user asks you to look at something or describe what you see\n"
+            "4. You need to visually assess the user's condition or surroundings\n"
+            "When the user says things like 'take a photo', 'selfie', 'look at me', you MUST call this tool.\n"
+            "For the `question` parameter, describe what you want to know from the photo, e.g. 'Describe the person and their expression' or 'What is in the photo'.\n"
             "Return:\n"
             "  A JSON object that provides the photo information.",
             PropertyList({
@@ -112,11 +116,8 @@ void McpServer::AddCommonTools() {
                 // Lower the priority to do the camera capture
                 TaskPriorityReset priority_reset(1);
 
-                if (!camera->Capture()) {
-                    throw std::runtime_error("Failed to capture photo");
-                }
                 auto question = properties["question"].value<std::string>();
-                return camera->Explain(question);
+                return camera->CaptureAndExplain(question);
             });
     }
 #endif

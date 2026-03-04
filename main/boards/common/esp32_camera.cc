@@ -152,6 +152,14 @@ bool Esp32Camera::SetSwapBytes(bool enabled) {
     return true;
 }
 
+std::string Esp32Camera::CaptureAndExplain(const std::string &question) {
+    std::lock_guard<std::mutex> lock(capture_mutex_);
+    if (!Capture()) {
+        throw std::runtime_error("Failed to capture photo");
+    }
+    return Explain(question);
+}
+
 std::string Esp32Camera::Explain(const std::string &question) {
     if (explain_url_.empty()) {
         throw std::runtime_error("Image explain URL or token is not set");

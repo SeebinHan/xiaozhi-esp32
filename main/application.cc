@@ -916,11 +916,7 @@ void Application::HandleStateChangedEvent() {
                 if (camera) {
                     std::thread([this, camera]() {
                         try {
-                            if (!camera->Capture()) {
-                                ESP_LOGW(TAG, "Proactive emotion: capture failed");
-                                return;
-                            }
-                            auto result = camera->Explain(
+                            auto result = camera->CaptureAndExplain(
                                 "简要描述画面中人物的状态：表情、情绪、动作、环境。"
                                 "中文回答，不超过50字。没有人则回复none。");
                             // Parse JSON response to extract "response" field

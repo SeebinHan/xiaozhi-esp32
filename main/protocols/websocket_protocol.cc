@@ -111,6 +111,12 @@ bool WebsocketProtocol::OpenAudioChannel() {
 
     websocket_->OnData([this](const char* data, size_t len, bool binary) {
         if (binary) {
+            static int64_t last_audio_recv_time = 0;
+            int64_t now = esp_timer_get_time() / 1000;
+            if (last_audio_recv_time > 0 && (now - last_audio_recv_time) > 200) {
+                ESP_LOGW(TAG, "[C1] Audio gap: %ldms, size=%d", (long)(now - last_audio_recv_time), (int)len);
+            }
+            last_audio_recv_time = now;
             if (on_incoming_audio_ != nullptr) {
                 if (version_ == 2) {
                     BinaryProtocol2* bp2 = (BinaryProtocol2*)data;
