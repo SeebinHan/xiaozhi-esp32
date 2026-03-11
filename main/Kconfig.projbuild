@@ -503,6 +503,9 @@ choice BOARD_TYPE
     config BOARD_TYPE_HU_087
         bool "HU-087"
         depends on IDF_TARGET_ESP32S3
+    config BOARD_TYPE_TOPSKY_PET_S3
+        bool "TopSky Pet S3 (Hiwonder ESP32-S3)"
+        depends on IDF_TARGET_ESP32S3
 endchoice
 
 choice
