@@ -8,6 +8,7 @@
 #include "mcp_server.h"
 #include "lamp_controller.h"
 #include "led/single_led.h"
+#include "cat_eye_display.h"
 
 #include <esp_log.h>
 #include <driver/i2c_master.h>
@@ -59,11 +60,30 @@ static const gc9a01_lcd_init_cmd_t gc9107_lcd_init_cmds[] = {
  
 #define TAG "CompactWifiBoardLCD"
 
+/* Wrapper display that syncs emotions to cat eye displays */
+class LcdDisplayWithEyes : public SpiLcdDisplay {
+private:
+    CatEyeDisplay* cat_eyes_;
+public:
+    LcdDisplayWithEyes(esp_lcd_panel_io_handle_t io, esp_lcd_panel_handle_t panel,
+                       int w, int h, int off_x, int off_y, bool mx, bool my, bool swap_xy,
+                       CatEyeDisplay* eyes)
+        : SpiLcdDisplay(io, panel, w, h, off_x, off_y, mx, my, swap_xy), cat_eyes_(eyes) {}
+
+    void SetEmotion(const char* emotion) override {
+        SpiLcdDisplay::SetEmotion(emotion);
+        if (cat_eyes_) {
+            cat_eyes_->SetEmotion(emotion);
+        }
+    }
+};
+
 class CompactWifiBoardLCD : public WifiBoard {
 private:
  
     Button boot_button_;
     LcdDisplay* display_;
+    CatEyeDisplay* cat_eyes_ = nullptr;
 
     void InitializeSpi() {
         spi_bus_config_t buscfg = {};
@@ -118,8 +138,9 @@ private:
 #ifdef  LCD_TYPE_GC9A01_SERIAL
         panel_config.vendor_config = &gc9107_vendor_config;
 #endif
-        display_ = new SpiLcdDisplay(panel_io, panel,
-                                    DISPLAY_WIDTH, DISPLAY_HEIGHT, DISPLAY_OFFSET_X, DISPLAY_OFFSET_Y, DISPLAY_MIRROR_X, DISPLAY_MIRROR_Y, DISPLAY_SWAP_XY);
+        display_ = new LcdDisplayWithEyes(panel_io, panel,
+                                    DISPLAY_WIDTH, DISPLAY_HEIGHT, DISPLAY_OFFSET_X, DISPLAY_OFFSET_Y, DISPLAY_MIRROR_X, DISPLAY_MIRROR_Y, DISPLAY_SWAP_XY,
+                                    cat_eyes_);
     }
 
     void InitializeButtons() {
@@ -133,6 +154,11 @@ private:
         });
     }
 
+    void InitializeEyeDisplays() {
+        cat_eyes_ = new CatEyeDisplay();
+        cat_eyes_->Initialize();
+    }
+
     // 物联网初始化，添加对 AI 可见设备
     void InitializeTools() {
         static LampController lamp(LAMP_GPIO);
@@ -142,6 +168,7 @@ public:
     CompactWifiBoardLCD() :
         boot_button_(BOOT_BUTTON_GPIO) {
         InitializeSpi();
+        InitializeEyeDisplays();
         InitializeLcdDisplay();
         InitializeButtons();
         InitializeTools();
