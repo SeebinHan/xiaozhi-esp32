@@ -7,8 +7,8 @@
  *   SCLK  -> GPIO2   (两眼并联)
  *   CS左  -> GPIO3   (左眼独立)
  *   CS右  -> GPIO8   (右眼独立)
- *   DC    -> GPIO9   (两眼并联)
- *   RST   -> GPIO10  (两眼并联)
+ *   DC    -> GPIO13  (两眼并联)
+ *   RST   -> GPIO14  (两眼并联)
  *   BL    -> 3.3V    (背光常亮)
  */
 
@@ -23,8 +23,8 @@
 #define EYE_PIN_SCLK    GPIO_NUM_2
 #define EYE_PIN_CS_L    GPIO_NUM_3
 #define EYE_PIN_CS_R    GPIO_NUM_8
-#define EYE_PIN_DC      GPIO_NUM_9
-#define EYE_PIN_RST     GPIO_NUM_10
+#define EYE_PIN_DC      GPIO_NUM_13
+#define EYE_PIN_RST     GPIO_NUM_14
 
 #define EYE_WIDTH       160
 #define EYE_HEIGHT      160

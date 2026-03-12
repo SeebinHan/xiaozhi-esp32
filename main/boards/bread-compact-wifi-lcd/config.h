@@ -286,4 +286,11 @@
 // A MCP Test: Control a lamp
 #define LAMP_GPIO GPIO_NUM_18
 
+// 薄膜压力传感器 AO 引脚（ADC1_CH9, GPIO10）
+#define TOUCH_SENSOR_GPIO  GPIO_NUM_10
+#define TOUCH_SENSOR_ADC_CHANNEL ADC_CHANNEL_9
+
+// MG90S 尾巴舵机 PWM 引脚
+#define TAIL_SERVO_GPIO GPIO_NUM_11
+
 #endif // _BOARD_CONFIG_H_

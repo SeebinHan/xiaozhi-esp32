@@ -9,6 +9,8 @@
 #include "lamp_controller.h"
 #include "led/single_led.h"
 #include "cat_eye_display.h"
+#include "touch_sensor.h"
+#include "tail_servo.h"
 
 #include <esp_log.h>
 #include <driver/i2c_master.h>
@@ -64,16 +66,33 @@ static const gc9a01_lcd_init_cmd_t gc9107_lcd_init_cmds[] = {
 class LcdDisplayWithEyes : public SpiLcdDisplay {
 private:
     CatEyeDisplay* cat_eyes_;
+    TailServo* tail_;
 public:
     LcdDisplayWithEyes(esp_lcd_panel_io_handle_t io, esp_lcd_panel_handle_t panel,
                        int w, int h, int off_x, int off_y, bool mx, bool my, bool swap_xy,
-                       CatEyeDisplay* eyes)
-        : SpiLcdDisplay(io, panel, w, h, off_x, off_y, mx, my, swap_xy), cat_eyes_(eyes) {}
+                       CatEyeDisplay* eyes, TailServo* tail)
+        : SpiLcdDisplay(io, panel, w, h, off_x, off_y, mx, my, swap_xy),
+          cat_eyes_(eyes), tail_(tail) {}
 
     void SetEmotion(const char* emotion) override {
         SpiLcdDisplay::SetEmotion(emotion);
         if (cat_eyes_) {
             cat_eyes_->SetEmotion(emotion);
+        }
+        /* 尾巴随表情联动 */
+        if (tail_) {
+            std::string emo(emotion);
+            if (emo == "happy" || emo == "laughing" || emo == "funny") {
+                tail_->Wag();
+            } else if (emo == "love" || emo == "heart_eyes") {
+                tail_->WagSlow();
+            } else if (emo == "sad" || emo == "crying") {
+                tail_->Droop();
+            } else if (emo == "surprised" || emo == "angry") {
+                tail_->Perk();
+            } else {
+                tail_->SetAngle(90);
+            }
         }
     }
 };
@@ -84,6 +103,9 @@ private:
     Button boot_button_;
     LcdDisplay* display_;
     CatEyeDisplay* cat_eyes_ = nullptr;
+    TouchSensor* touch_sensor_ = nullptr;
+    TailServo* tail_servo_ = nullptr;
+    bool touch_override_ = false;  /* 触摸时临时覆盖眼睛表情 */
 
     void InitializeSpi() {
         spi_bus_config_t buscfg = {};
@@ -140,7 +162,7 @@ private:
 #endif
         display_ = new LcdDisplayWithEyes(panel_io, panel,
                                     DISPLAY_WIDTH, DISPLAY_HEIGHT, DISPLAY_OFFSET_X, DISPLAY_OFFSET_Y, DISPLAY_MIRROR_X, DISPLAY_MIRROR_Y, DISPLAY_SWAP_XY,
-                                    cat_eyes_);
+                                    cat_eyes_, tail_servo_);
     }
 
     void InitializeButtons() {
@@ -159,6 +181,57 @@ private:
         cat_eyes_->Initialize();
     }
 
+    void InitializeTailServo() {
+        tail_servo_ = new TailServo(TAIL_SERVO_GPIO);
+        tail_servo_->Initialize();
+    }
+
+    void InitializeTouchSensor() {
+        touch_sensor_ = new TouchSensor(TOUCH_SENSOR_GPIO, TOUCH_SENSOR_ADC_CHANNEL);
+        touch_sensor_->Initialize();
+
+        /* 轮询任务：检测触摸并切换眼睛表情 */
+        xTaskCreate([](void* arg) {
+            auto* board = static_cast<CompactWifiBoardLCD*>(arg);
+            TouchLevel prev_level = TouchLevel::kNone;
+            int debug_counter = 0;
+            while (true) {
+                int raw = board->touch_sensor_->ReadRaw();
+                TouchLevel level = board->touch_sensor_->ReadLevel();
+
+                /* 每2秒打印一次 raw 值，方便调试 */
+                if (++debug_counter >= 20) {
+                    debug_counter = 0;
+                    ESP_LOGI(TAG, "Touch raw: %d, level: %d", raw, (int)level);
+                }
+
+                if (level != prev_level) {
+                    ESP_LOGI(TAG, "Touch changed: level %d -> %d, raw: %d",
+                             (int)prev_level, (int)level, raw);
+                    if (level != TouchLevel::kNone) {
+                        board->touch_override_ = true;
+                        if (level == TouchLevel::kLight) {
+                            board->cat_eyes_->SetEmotion("happy");
+                            if (board->tail_servo_) board->tail_servo_->WagSlow();
+                        } else if (level == TouchLevel::kMedium) {
+                            board->cat_eyes_->SetEmotion("love");
+                            if (board->tail_servo_) board->tail_servo_->Wag();
+                        } else {
+                            board->cat_eyes_->SetEmotion("surprised");
+                            if (board->tail_servo_) board->tail_servo_->Perk();
+                        }
+                    } else if (board->touch_override_) {
+                        board->touch_override_ = false;
+                        board->cat_eyes_->SetEmotion("neutral");
+                        if (board->tail_servo_) board->tail_servo_->SetAngle(90);
+                    }
+                    prev_level = level;
+                }
+                vTaskDelay(pdMS_TO_TICKS(100));
+            }
+        }, "touch_poll", 3072, this, 2, nullptr);
+    }
+
     // 物联网初始化，添加对 AI 可见设备
     void InitializeTools() {
         static LampController lamp(LAMP_GPIO);
@@ -169,8 +242,10 @@ public:
         boot_button_(BOOT_BUTTON_GPIO) {
         InitializeSpi();
         InitializeEyeDisplays();
+        InitializeTailServo();
         InitializeLcdDisplay();
         InitializeButtons();
+        InitializeTouchSensor();
         InitializeTools();
         if (DISPLAY_BACKLIGHT_PIN != GPIO_NUM_NC) {
             GetBacklight()->RestoreBrightness();
