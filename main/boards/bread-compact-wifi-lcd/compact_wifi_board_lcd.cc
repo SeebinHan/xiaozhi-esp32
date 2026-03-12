@@ -11,6 +11,7 @@
 #include "cat_eye_display.h"
 #include "touch_sensor.h"
 #include "tail_servo.h"
+#include "head_gimbal.h"
 
 #include <esp_log.h>
 #include <driver/i2c_master.h>
@@ -67,12 +68,13 @@ class LcdDisplayWithEyes : public SpiLcdDisplay {
 private:
     CatEyeDisplay* cat_eyes_;
     TailServo* tail_;
+    HeadGimbal* head_;
 public:
     LcdDisplayWithEyes(esp_lcd_panel_io_handle_t io, esp_lcd_panel_handle_t panel,
                        int w, int h, int off_x, int off_y, bool mx, bool my, bool swap_xy,
-                       CatEyeDisplay* eyes, TailServo* tail)
+                       CatEyeDisplay* eyes, TailServo* tail, HeadGimbal* head)
         : SpiLcdDisplay(io, panel, w, h, off_x, off_y, mx, my, swap_xy),
-          cat_eyes_(eyes), tail_(tail) {}
+          cat_eyes_(eyes), tail_(tail), head_(head) {}
 
     void SetEmotion(const char* emotion) override {
         SpiLcdDisplay::SetEmotion(emotion);
@@ -94,6 +96,21 @@ public:
                 tail_->SetAngle(90);
             }
         }
+        /* 头部随表情联动 */
+        if (head_) {
+            std::string emo(emotion);
+            if (emo == "happy" || emo == "laughing") {
+                head_->Nod();
+            } else if (emo == "sad" || emo == "crying") {
+                head_->LookDown();
+            } else if (emo == "thinking" || emo == "confused") {
+                head_->LookUp();
+            } else if (emo == "angry" || emo == "hateful") {
+                head_->Shake();
+            } else {
+                head_->LookCenter();
+            }
+        }
     }
 };
 
@@ -105,6 +122,7 @@ private:
     CatEyeDisplay* cat_eyes_ = nullptr;
     TouchSensor* touch_sensor_ = nullptr;
     TailServo* tail_servo_ = nullptr;
+    HeadGimbal* head_gimbal_ = nullptr;
     bool touch_override_ = false;  /* 触摸时临时覆盖眼睛表情 */
 
     void InitializeSpi() {
@@ -162,7 +180,7 @@ private:
 #endif
         display_ = new LcdDisplayWithEyes(panel_io, panel,
                                     DISPLAY_WIDTH, DISPLAY_HEIGHT, DISPLAY_OFFSET_X, DISPLAY_OFFSET_Y, DISPLAY_MIRROR_X, DISPLAY_MIRROR_Y, DISPLAY_SWAP_XY,
-                                    cat_eyes_, tail_servo_);
+                                    cat_eyes_, tail_servo_, head_gimbal_);
     }
 
     void InitializeButtons() {
@@ -184,6 +202,11 @@ private:
     void InitializeTailServo() {
         tail_servo_ = new TailServo(TAIL_SERVO_GPIO);
         tail_servo_->Initialize();
+    }
+
+    void InitializeHeadGimbal() {
+        head_gimbal_ = new HeadGimbal(HEAD_PAN_GPIO, HEAD_TILT_GPIO);
+        head_gimbal_->Initialize();
     }
 
     void InitializeTouchSensor() {
@@ -243,6 +266,7 @@ public:
         InitializeSpi();
         InitializeEyeDisplays();
         InitializeTailServo();
+        // InitializeHeadGimbal();  /* 禁用：15kg舵机电流过大导致ESP32掉电重启，需外接6V电源 */
         InitializeLcdDisplay();
         InitializeButtons();
         InitializeTouchSensor();

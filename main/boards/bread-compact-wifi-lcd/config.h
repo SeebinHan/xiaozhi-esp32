@@ -293,4 +293,8 @@
 // MG90S 尾巴舵机 PWM 引脚
 #define TAIL_SERVO_GPIO GPIO_NUM_11
 
+// 二维云台舵机 PWM 引脚（头部）
+#define HEAD_PAN_GPIO   GPIO_NUM_12   // 水平旋转
+#define HEAD_TILT_GPIO  GPIO_NUM_17   // 俯仰
+
 #endif // _BOARD_CONFIG_H_
