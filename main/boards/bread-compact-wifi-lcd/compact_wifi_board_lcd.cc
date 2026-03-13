@@ -266,7 +266,7 @@ public:
         InitializeSpi();
         InitializeEyeDisplays();
         InitializeTailServo();
-        // InitializeHeadGimbal();  /* 禁用：15kg舵机电流过大导致ESP32掉电重启，需外接6V电源 */
+        InitializeHeadGimbal();
         InitializeLcdDisplay();
         InitializeButtons();
         InitializeTouchSensor();
