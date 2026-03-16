@@ -28,19 +28,40 @@
 #endif
 
 
-#define BUILTIN_LED_GPIO        GPIO_NUM_48
+#define BUILTIN_LED_GPIO        GPIO_NUM_NC  // G48 已分配给摄像头 D0
 #define BOOT_BUTTON_GPIO        GPIO_NUM_0
 #define TOUCH_BUTTON_GPIO       GPIO_NUM_NC
 #define VOLUME_UP_BUTTON_GPIO   GPIO_NUM_NC
 #define VOLUME_DOWN_BUTTON_GPIO GPIO_NUM_NC
 
 
-#define DISPLAY_BACKLIGHT_PIN GPIO_NUM_42
-#define DISPLAY_MOSI_PIN      GPIO_NUM_47
-#define DISPLAY_CLK_PIN       GPIO_NUM_21
-#define DISPLAY_DC_PIN        GPIO_NUM_40
-#define DISPLAY_RST_PIN       GPIO_NUM_45
-#define DISPLAY_CS_PIN        GPIO_NUM_41
+#define DISPLAY_BACKLIGHT_PIN GPIO_NUM_NC
+#define DISPLAY_MOSI_PIN      GPIO_NUM_NC
+#define DISPLAY_CLK_PIN       GPIO_NUM_NC
+#define DISPLAY_DC_PIN        GPIO_NUM_NC
+#define DISPLAY_RST_PIN       GPIO_NUM_NC
+#define DISPLAY_CS_PIN        GPIO_NUM_NC
+
+// OV2640 摄像头 DVP 引脚（主 LCD 移除后复用其 GPIO）
+// 注意：G35/G36/G37 被八线 PSRAM 占用，不可使用
+// 此模块板载晶振，无 XCLK 引脚
+#define CAMERA_PIN_D0       GPIO_NUM_48   // 原板载LED，已放弃
+#define CAMERA_PIN_D1       GPIO_NUM_18   // 原灯控，已放弃
+#define CAMERA_PIN_D2       GPIO_NUM_9
+#define CAMERA_PIN_D3       GPIO_NUM_19
+#define CAMERA_PIN_D4       GPIO_NUM_20
+#define CAMERA_PIN_D5       GPIO_NUM_45
+#define CAMERA_PIN_D6       GPIO_NUM_46
+#define CAMERA_PIN_D7       GPIO_NUM_42
+#define CAMERA_PIN_PCLK     GPIO_NUM_41
+#define CAMERA_PIN_VSYNC    GPIO_NUM_40
+#define CAMERA_PIN_HREF     GPIO_NUM_21
+#define CAMERA_PIN_XCLK     GPIO_NUM_NC   // 模块板载晶振，不需要
+#define CAMERA_PIN_SIOD     GPIO_NUM_38   // I2C SDA
+#define CAMERA_PIN_SIOC     GPIO_NUM_39   // I2C SCL
+#define CAMERA_PIN_RST      GPIO_NUM_NC   // 不接
+#define CAMERA_PIN_PWDN     GPIO_NUM_NC   // 不接
+#define XCLK_FREQ_HZ        20000000
 
 
 #ifdef CONFIG_LCD_ST7789_240X320
@@ -283,8 +304,8 @@
 #endif
 
 
-// A MCP Test: Control a lamp
-#define LAMP_GPIO GPIO_NUM_18
+// G18 已分配给摄像头 D1，灯控功能移除
+// #define LAMP_GPIO GPIO_NUM_18
 
 // 薄膜压力传感器 AO 引脚（ADC1_CH9, GPIO10）
 #define TOUCH_SENSOR_GPIO  GPIO_NUM_10

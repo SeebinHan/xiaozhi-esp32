@@ -39,8 +39,8 @@ private:
     TouchCallback callback_;
 
     /* ADC 阈值（反向逻辑：无压力=4095，压力越大值越低）
-     * 低于此值才算有触摸 */
-    static constexpr int kIdleMin        = 3800;  /* 高于此值=无触摸 */
-    static constexpr int kThresholdLight = 3000;  /* 轻触上限 */
+     * 接入摄像头后 idle 噪声约 3850-4080，配合软件防抖使用 */
+    static constexpr int kIdleMin        = 3700;  /* 高于此值=无触摸 */
+    static constexpr int kThresholdLight = 2800;  /* 轻触上限 */
     static constexpr int kThresholdHard  = 1500;  /* 重按上限（值更低=压力更大） */
 };
