@@ -1,6 +1,6 @@
 /*
- * 二维云台驱动实现
- * Pan/Tilt 共享 LEDC_TIMER_1（与尾巴舵机共用）
+ * 单轴云台驱动实现（仅俯仰）
+ * 共享 LEDC_TIMER_1（与尾巴舵机共用）
  */
 
 #include "head_gimbal.h"
@@ -10,40 +10,33 @@
 
 static const char* TAG = "HeadGimbal";
 
-HeadGimbal::HeadGimbal(gpio_num_t pan_pin, gpio_num_t tilt_pin)
-    : pan_pin_(pan_pin), tilt_pin_(tilt_pin) {}
+HeadGimbal::HeadGimbal(gpio_num_t tilt_pin)
+    : tilt_pin_(tilt_pin) {}
 
 void HeadGimbal::Initialize() {
-    ESP_LOGI(TAG, "Initializing head gimbal: pan=GPIO%d, tilt=GPIO%d", pan_pin_, tilt_pin_);
+    ESP_LOGI(TAG, "Initializing head gimbal (tilt only): tilt=GPIO%d", tilt_pin_);
 
-    /* TIMER1 已由 TailServo 初始化，这里只添加 channel */
-    /* 如果 TailServo 未初始化，需要自己配置 timer */
+    /* TIMER1 已由 TailServo 初始化，重复配置无害 */
     ledc_timer_config_t timer_conf = {};
     timer_conf.speed_mode = LEDC_LOW_SPEED_MODE;
     timer_conf.timer_num = kTimer;
     timer_conf.duty_resolution = LEDC_TIMER_14_BIT;
     timer_conf.freq_hz = 50;
     timer_conf.clk_cfg = LEDC_AUTO_CLK;
-    ledc_timer_config(&timer_conf);  /* 重复配置无害 */
+    ledc_timer_config(&timer_conf);
 
-    /* Pan channel */
+    /* Tilt channel */
     ledc_channel_config_t ch_conf = {};
     ch_conf.speed_mode = LEDC_LOW_SPEED_MODE;
-    ch_conf.channel = kPanChannel;
+    ch_conf.channel = kTiltChannel;
     ch_conf.timer_sel = kTimer;
     ch_conf.intr_type = LEDC_INTR_DISABLE;
-    ch_conf.gpio_num = pan_pin_;
+    ch_conf.gpio_num = tilt_pin_;
     ch_conf.duty = AngleToDuty(90);
     ch_conf.hpoint = 0;
     ESP_ERROR_CHECK(ledc_channel_config(&ch_conf));
 
-    /* Tilt channel */
-    ch_conf.channel = kTiltChannel;
-    ch_conf.gpio_num = tilt_pin_;
-    ch_conf.duty = AngleToDuty(90);
-    ESP_ERROR_CHECK(ledc_channel_config(&ch_conf));
-
-    ESP_LOGI(TAG, "Head gimbal ready");
+    ESP_LOGI(TAG, "Head gimbal ready (tilt only)");
 }
 
 int HeadGimbal::AngleToDuty(int angle) {
@@ -57,57 +50,49 @@ void HeadGimbal::SetServo(ledc_channel_t ch, int angle) {
     ledc_update_duty(LEDC_LOW_SPEED_MODE, ch);
 }
 
-void HeadGimbal::SetPan(int angle) {
-    SetServo(kPanChannel, angle);
-}
-
 void HeadGimbal::SetTilt(int angle) {
     SetServo(kTiltChannel, angle);
+    tilt_angle_ = angle;
 }
 
-void HeadGimbal::SetAngles(int pan, int tilt) {
-    SetPan(pan);
-    SetTilt(tilt);
+void HeadGimbal::SmoothTilt(int target, int step_delay_ms) {
+    int start = tilt_angle_;
+    int diff = target - start;
+    int steps = abs(diff);
+    if (steps == 0) return;
+    int dir = (diff > 0) ? 1 : -1;
+    for (int i = 1; i <= steps; i++) {
+        SetTilt(start + i * dir);
+        vTaskDelay(pdMS_TO_TICKS(step_delay_ms));
+    }
 }
 
 void HeadGimbal::LookCenter() {
-    SetAngles(90, 90);
-}
-
-void HeadGimbal::LookLeft() {
-    SetPan(135);
-}
-
-void HeadGimbal::LookRight() {
-    SetPan(45);
+    SmoothTilt(90, 12);
 }
 
 void HeadGimbal::LookUp() {
-    SetTilt(135);
+    SmoothTilt(135, 12);
 }
 
 void HeadGimbal::LookDown() {
-    SetTilt(60);
+    SmoothTilt(60, 12);
 }
 
 void HeadGimbal::Nod() {
     /* 点头：上下点两次 */
     for (int i = 0; i < 2; i++) {
-        SetTilt(70);
-        vTaskDelay(pdMS_TO_TICKS(200));
-        SetTilt(100);
-        vTaskDelay(pdMS_TO_TICKS(200));
+        SmoothTilt(70, 10);
+        SmoothTilt(100, 10);
     }
-    SetTilt(90);
+    SmoothTilt(90, 12);
 }
 
 void HeadGimbal::Shake() {
-    /* 摇头：左右摇两次 */
-    for (int i = 0; i < 2; i++) {
-        SetPan(70);
-        vTaskDelay(pdMS_TO_TICKS(250));
-        SetPan(110);
-        vTaskDelay(pdMS_TO_TICKS(250));
+    /* 无水平轴，改为快速连续点头表示不满 */
+    for (int i = 0; i < 3; i++) {
+        SmoothTilt(75, 6);
+        SmoothTilt(105, 6);
     }
-    SetPan(90);
+    SmoothTilt(90, 10);
 }

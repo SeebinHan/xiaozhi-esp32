@@ -61,8 +61,10 @@ private:
     void FillColor(spi_device_handle_t spi, uint16_t color);
 
     /* Eye pattern generators - draw into frame_buf_ */
-    void DrawCatEye(uint16_t iris_r, uint16_t iris_g, uint16_t iris_b,
-                    float pupil_openness, float look_x, float look_y);
+    void DrawCatEye(uint8_t iris_r, uint8_t iris_g, uint8_t iris_b,
+                    float pupil_dilation, float look_x, float look_y,
+                    float upper_lid = 1.0f, float lower_lid = 1.0f,
+                    float brow_anger = 0.0f);
     void DrawClosedEye();
     void DrawHeartEye();
 

@@ -85,12 +85,12 @@ private:
     }
 
     void InitializeTailServo() {
-        tail_servo_ = new TailServo(TAIL_SERVO_GPIO);
+        tail_servo_ = new TailServo(TAIL_SERVO_HORIZONTAL_GPIO, TAIL_SERVO_VERTICAL_GPIO);
         tail_servo_->Initialize();
     }
 
     void InitializeHeadGimbal() {
-        head_gimbal_ = new HeadGimbal(HEAD_PAN_GPIO, HEAD_TILT_GPIO);
+        head_gimbal_ = new HeadGimbal(HEAD_TILT_GPIO);
         head_gimbal_->Initialize();
     }
 

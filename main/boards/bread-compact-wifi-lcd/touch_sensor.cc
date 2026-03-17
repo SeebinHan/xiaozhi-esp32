@@ -44,16 +44,24 @@ int TouchSensor::ReadRaw() {
     return raw;
 }
 
-TouchLevel TouchSensor::ReadLevel() {
-    int raw = ReadRaw();
+TouchLevel TouchSensor::RawToLevel(int raw) {
     /* 反向逻辑：无压力=4095，按下时值下降 */
     if (raw >= kIdleMin) {
         return TouchLevel::kNone;
     } else if (raw >= kThresholdLight) {
-        return TouchLevel::kLight;       /* 3000~3800 */
+        return TouchLevel::kLight;       /* 2500~3400 */
     } else if (raw >= kThresholdHard) {
-        return TouchLevel::kMedium;      /* 1500~3000 */
+        return TouchLevel::kMedium;      /* 1200~2500 */
     } else {
-        return TouchLevel::kHard;        /* <1500 */
+        return TouchLevel::kHard;        /* <1200 */
     }
+}
+
+TouchLevel TouchSensor::ReadLevel() {
+    return RawToLevel(ReadRaw());
+}
+
+TouchLevel TouchSensor::ReadRawAndLevel(int& out_raw) {
+    out_raw = ReadRaw();
+    return RawToLevel(out_raw);
 }

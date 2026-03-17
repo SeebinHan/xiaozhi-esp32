@@ -56,7 +56,7 @@
 #define CAMERA_PIN_PCLK     GPIO_NUM_41
 #define CAMERA_PIN_VSYNC    GPIO_NUM_40
 #define CAMERA_PIN_HREF     GPIO_NUM_21
-#define CAMERA_PIN_XCLK     GPIO_NUM_47   // 驱动需要LEDC时钟初始化，模块自带晶振无需物理连线
+#define CAMERA_PIN_XCLK     GPIO_NUM_47   // 驱动内部需要真实GPIO初始化LEDC，不可设为NC
 #define CAMERA_PIN_SIOD     GPIO_NUM_38   // I2C SDA
 #define CAMERA_PIN_SIOC     GPIO_NUM_39   // I2C SCL
 #define CAMERA_PIN_RST      GPIO_NUM_NC   // 不接
@@ -311,11 +311,11 @@
 #define TOUCH_SENSOR_GPIO  GPIO_NUM_10
 #define TOUCH_SENSOR_ADC_CHANNEL ADC_CHANNEL_9
 
-// MG90S 尾巴舵机 PWM 引脚
-#define TAIL_SERVO_GPIO GPIO_NUM_11
+// 双轴尾巴舵机 PWM 引脚
+#define TAIL_SERVO_HORIZONTAL_GPIO GPIO_NUM_11   // 左右摆动
+#define TAIL_SERVO_VERTICAL_GPIO   GPIO_NUM_12   // 上下翘/垂（原云台水平轴释放）
 
-// 二维云台舵机 PWM 引脚（头部）
-#define HEAD_PAN_GPIO   GPIO_NUM_12   // 水平旋转
+// 单轴云台舵机 PWM 引脚（头部，仅俯仰）
 #define HEAD_TILT_GPIO  GPIO_NUM_17   // 俯仰
 
 #endif // _BOARD_CONFIG_H_

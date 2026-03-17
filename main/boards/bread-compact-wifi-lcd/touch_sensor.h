@@ -30,6 +30,8 @@ public:
 
     /* 单次读取当前压力等级 */
     TouchLevel ReadLevel();
+    /* 读取 raw 并同时返回对应 level（避免双重读取不一致） */
+    TouchLevel ReadRawAndLevel(int& out_raw);
     int ReadRaw();
 
 private:
@@ -39,8 +41,11 @@ private:
     TouchCallback callback_;
 
     /* ADC 阈值（反向逻辑：无压力=4095，压力越大值越低）
-     * 接入摄像头后 idle 噪声约 3850-4080，配合软件防抖使用 */
-    static constexpr int kIdleMin        = 3700;  /* 高于此值=无触摸 */
-    static constexpr int kThresholdLight = 2800;  /* 轻触上限 */
-    static constexpr int kThresholdHard  = 1500;  /* 重按上限（值更低=压力更大） */
+     * 实测 idle 噪声 3700-4080，按压时直接跳到 500-1300 */
+    static constexpr int kIdleMin        = 3400;  /* 高于此值=无触摸（留足噪声余量） */
+    static constexpr int kThresholdLight = 2500;  /* 轻触上限 */
+    static constexpr int kThresholdHard  = 1200;  /* 重按上限（值更低=压力更大） */
+
+    /* 将 raw 值映射为 level */
+    TouchLevel RawToLevel(int raw);
 };
