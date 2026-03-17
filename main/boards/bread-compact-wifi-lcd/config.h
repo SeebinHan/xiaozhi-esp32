@@ -56,7 +56,7 @@
 #define CAMERA_PIN_PCLK     GPIO_NUM_41
 #define CAMERA_PIN_VSYNC    GPIO_NUM_40
 #define CAMERA_PIN_HREF     GPIO_NUM_21
-#define CAMERA_PIN_XCLK     GPIO_NUM_NC   // 模块板载晶振，不需要
+#define CAMERA_PIN_XCLK     GPIO_NUM_47   // 驱动需要LEDC时钟初始化，模块自带晶振无需物理连线
 #define CAMERA_PIN_SIOD     GPIO_NUM_38   // I2C SDA
 #define CAMERA_PIN_SIOC     GPIO_NUM_39   // I2C SCL
 #define CAMERA_PIN_RST      GPIO_NUM_NC   // 不接
