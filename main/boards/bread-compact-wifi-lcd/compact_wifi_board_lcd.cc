@@ -121,9 +121,9 @@ private:
         config.pixel_format = PIXFORMAT_RGB565;
         config.frame_size = FRAMESIZE_VGA;
         config.jpeg_quality = 12;
-        config.fb_count = 1;
+        config.fb_count = 2;
         config.fb_location = CAMERA_FB_IN_PSRAM;
-        config.grab_mode = CAMERA_GRAB_WHEN_EMPTY;
+        config.grab_mode = CAMERA_GRAB_LATEST;
         camera_ = new Esp32Camera(config);
         camera_->SetHMirror(false);
     }
@@ -150,13 +150,15 @@ private:
             TouchLevel pending_level = TouchLevel::kNone;
             int debounce_count = 0;
             int debug_counter = 0;
-            static constexpr int kDebounceThreshold = 3;  /* 连续3次相同才确认 */
+            static constexpr int kDebounceThreshold = 2;   /* 连续2次相同即确认（快速响应） */
+            static constexpr int kPollIntervalMs    = 50;  /* 50ms 轮询（比原来快一倍） */
+            static constexpr int kDebugIntervalCount = 40; /* 40×50ms = 2秒打印一次 */
             while (true) {
-                int raw = board->touch_sensor_->ReadRaw();
-                TouchLevel level = board->touch_sensor_->ReadLevel();
+                int raw = 0;
+                TouchLevel level = board->touch_sensor_->ReadRawAndLevel(raw);
 
                 /* 每2秒打印一次 raw 值，方便调试 */
-                if (++debug_counter >= 20) {
+                if (++debug_counter >= kDebugIntervalCount) {
                     debug_counter = 0;
                     ESP_LOGI(TAG, "Touch raw: %d, level: %d", raw, (int)level);
                 }
@@ -196,7 +198,7 @@ private:
                     debounce_count = 0;
                     pending_level = prev_level;
                 }
-                vTaskDelay(pdMS_TO_TICKS(100));
+                vTaskDelay(pdMS_TO_TICKS(kPollIntervalMs));
             }
         }, "touch_poll", 3072, this, 2, nullptr);
     }

@@ -61,7 +61,7 @@
 #define CAMERA_PIN_SIOC     GPIO_NUM_39   // I2C SCL
 #define CAMERA_PIN_RST      GPIO_NUM_NC   // 不接
 #define CAMERA_PIN_PWDN     GPIO_NUM_NC   // 不接
-#define XCLK_FREQ_HZ        20000000
+#define XCLK_FREQ_HZ        24000000      // 匹配模块板载24MHz晶振
 
 
 #ifdef CONFIG_LCD_ST7789_240X320
