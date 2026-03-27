@@ -1,6 +1,7 @@
 /*
  * GC9D01 双眼圆形 LCD 驱动
  * 用于猫咪 AI 伴侣的眼睛表情显示
+ * 支持自动眨眼动画
  *
  * 接线（面包板 DevKitC-1）：
  *   MOSI  -> GPIO1   (两眼并联)
@@ -16,6 +17,8 @@
 
 #include <driver/spi_master.h>
 #include <driver/gpio.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
 #include <string>
 
 /* Pin definitions */
@@ -67,6 +70,28 @@ private:
                     float brow_anger = 0.0f);
     void DrawClosedEye();
     void DrawHeartEye();
+
+    /* ---- 眨眼动画系统 ---- */
+    enum EyeType { kEyeNormal, kEyeClosed, kEyeHeart };
+
+    /* 保存当前眼睛参数，供眨眼动画复用 */
+    struct EyeParams {
+        uint8_t ir = 90, ig = 140, ib = 180;
+        float dilation = 0.7f;
+        float lx = 0, ly = 0;
+        float upper = 0.95f, lower = 0.98f;
+        float anger = 0;
+    };
+
+    EyeParams params_;
+    EyeType eye_type_ = kEyeNormal;
+    SemaphoreHandle_t render_mtx_ = nullptr;
+    TaskHandle_t blink_task_ = nullptr;
+    volatile bool blink_stop_ = false;  /* SetEmotion 打断眨眼 */
+
+    void RenderAndSend();         /* 用当前 params_ 渲染并发送到两个屏 */
+    void DoBlink();               /* 执行一次眨眼动画 */
+    static void BlinkTaskEntry(void* arg);
 
     static inline uint16_t Rgb565(uint8_t r, uint8_t g, uint8_t b) {
         return ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3);

@@ -44,7 +44,7 @@
 
 // OV2640 摄像头 DVP 引脚（主 LCD 移除后复用其 GPIO）
 // 注意：G35/G36/G37 被八线 PSRAM 占用，不可使用
-// 此模块板载晶振，无 XCLK 引脚
+// 当前使用的蓝色 OV2640 底板自带 24MHz 晶振，XCLK 不从排针引出
 #define CAMERA_PIN_D0       GPIO_NUM_48   // 原板载LED，已放弃
 #define CAMERA_PIN_D1       GPIO_NUM_18   // 原灯控，已放弃
 #define CAMERA_PIN_D2       GPIO_NUM_9
@@ -56,12 +56,12 @@
 #define CAMERA_PIN_PCLK     GPIO_NUM_41
 #define CAMERA_PIN_VSYNC    GPIO_NUM_40
 #define CAMERA_PIN_HREF     GPIO_NUM_21
-#define CAMERA_PIN_XCLK     GPIO_NUM_47   // 驱动内部需要真实GPIO初始化LEDC，不可设为NC
+#define CAMERA_PIN_XCLK     GPIO_NUM_NC   // 使用模组板载晶振，不输出主控 XCLK
 #define CAMERA_PIN_SIOD     GPIO_NUM_38   // I2C SDA
 #define CAMERA_PIN_SIOC     GPIO_NUM_39   // I2C SCL
 #define CAMERA_PIN_RST      GPIO_NUM_NC   // 不接
 #define CAMERA_PIN_PWDN     GPIO_NUM_NC   // 不接
-#define XCLK_FREQ_HZ        24000000      // 匹配模块板载24MHz晶振
+#define XCLK_FREQ_HZ        24000000      // 仅保留为模组参考时钟说明
 
 
 #ifdef CONFIG_LCD_ST7789_240X320
@@ -311,11 +311,12 @@
 #define TOUCH_SENSOR_GPIO  GPIO_NUM_10
 #define TOUCH_SENSOR_ADC_CHANNEL ADC_CHANNEL_9
 
-// 双轴尾巴舵机 PWM 引脚
-#define TAIL_SERVO_HORIZONTAL_GPIO GPIO_NUM_11   // 左右摆动
-#define TAIL_SERVO_VERTICAL_GPIO   GPIO_NUM_12   // 上下翘/垂（原云台水平轴释放）
+// 4G 模块 ML307R-DL 串口引脚（到货接线后启用 CONFIG_ENABLE_4G）
+// GPIO11=ESP32 TX→ML307R RXD, GPIO12=ML307R TXD→ESP32 RX
+#define ML307_TX_GPIO  GPIO_NUM_11
+#define ML307_RX_GPIO  GPIO_NUM_12
 
-// 单轴云台舵机 PWM 引脚（头部，仅俯仰）
-#define HEAD_TILT_GPIO  GPIO_NUM_17   // 俯仰
+// LD2410B 人体存在传感器引脚（VCC接5V，OUT→GPIO47）
+#define PRESENCE_SENSOR_GPIO  GPIO_NUM_47
 
 #endif // _BOARD_CONFIG_H_

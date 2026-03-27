@@ -207,7 +207,7 @@ void CatEyeDisplay::DrawCatEye(uint8_t iris_r, uint8_t iris_g, uint8_t iris_b,
     const float l_open = LOWER_MAX * clampf(lower_lid, 0, 1);
 
     /* 毛皮色（深紫灰） */
-    const uint8_t FUR_R = 28, FUR_G = 24, FUR_B = 38;
+    const uint8_t FUR_R = 195, FUR_G = 185, FUR_B = 175;
 
     for (int y = 0; y < EYE_HEIGHT; y++) {
         for (int x = 0; x < EYE_WIDTH; x++) {
@@ -274,9 +274,9 @@ void CatEyeDisplay::DrawCatEye(uint8_t iris_r, uint8_t iris_g, uint8_t iris_b,
                 /* ---- 虹膜渲染 ---- */
                 float angle = atan2f(idy, idx);
 
-                /* 径向纤维纹理（两个频率叠加，模拟真实虹膜丝状结构） */
-                float fiber1 = sinf(angle * 13.0f) * 0.12f;
-                float fiber2 = sinf(angle * 7.0f + 2.0f) * 0.08f;
+                /* 径向纤维纹理（柔和细腻，匹配玩偶猫眼质感） */
+                float fiber1 = sinf(angle * 11.0f) * 0.06f;
+                float fiber2 = sinf(angle * 5.0f + 1.5f) * 0.04f;
                 float fibers = fiber1 + fiber2;
 
                 /* 径向渐变：内亮外暗 */
@@ -372,7 +372,7 @@ void CatEyeDisplay::DrawCatEye(uint8_t iris_r, uint8_t iris_g, uint8_t iris_b,
 void CatEyeDisplay::DrawClosedEye() {
     const float CX = 80.0f, CY = 80.0f;
     const float DISP_R = 78.0f;
-    const uint8_t FUR_R = 28, FUR_G = 24, FUR_B = 38;
+    const uint8_t FUR_R = 195, FUR_G = 185, FUR_B = 175;
 
     for (int y = 0; y < EYE_HEIGHT; y++) {
         for (int x = 0; x < EYE_WIDTH; x++) {
@@ -401,10 +401,10 @@ void CatEyeDisplay::DrawClosedEye() {
                 /* 端部淡出 */
                 float end_fade = smoothstep(62.0f, 48.0f, abs_dx);
                 float intensity = line_f * end_fade;
-                /* 弧线颜色：金绿色，中心最亮 */
-                pr = (uint8_t)(FUR_R + intensity * (220 - FUR_R));
-                pg = (uint8_t)(FUR_G + intensity * (230 - FUR_G));
-                pb = (uint8_t)(FUR_B + intensity * (80 - FUR_B));
+                /* 弧线颜色：柔和蓝白色，中心最亮 */
+                pr = (uint8_t)(FUR_R + intensity * (235 - FUR_R));
+                pg = (uint8_t)(FUR_G + intensity * (240 - FUR_G));
+                pb = (uint8_t)(FUR_B + intensity * (250 - FUR_B));
             } else if (dist_to_arc > 0 && dist_to_arc < 22.0f && abs_dx < 58.0f) {
                 /* 弧线下方（眼睑内侧）- 微微发亮，暗示闭着的眼球 */
                 float inner_f = smoothstep(22.0f, 2.0f, dist_to_arc);
@@ -432,7 +432,7 @@ void CatEyeDisplay::DrawClosedEye() {
 void CatEyeDisplay::DrawHeartEye() {
     const float CX = 80.0f, CY = 80.0f;
     const float DISP_R = 78.0f;
-    const uint8_t FUR_R = 28, FUR_G = 24, FUR_B = 38;
+    const uint8_t FUR_R = 195, FUR_G = 185, FUR_B = 175;
 
     for (int y = 0; y < EYE_HEIGHT; y++) {
         for (int x = 0; x < EYE_WIDTH; x++) {
@@ -491,6 +491,76 @@ void CatEyeDisplay::DrawHeartEye() {
 }
 
 /* ================================================================
+ *  眨眼动画系统
+ *
+ *  原理：后台任务每 3~6 秒触发一次眨眼
+ *  眨眼 = 上眼睑快速闭合再慢速恢复（不对称，模拟真实眨眼）
+ *  通过 mutex 保护 frame_buf_ 和 SPI，确保线程安全
+ *  SetEmotion 可随时打断眨眼（blink_stop_ 标记）
+ * ================================================================ */
+void CatEyeDisplay::RenderAndSend() {
+    /* 仅对普通猫眼状态有效 */
+    DrawCatEye(params_.ir, params_.ig, params_.ib,
+               params_.dilation, params_.lx, params_.ly,
+               params_.upper, params_.lower, params_.anger);
+    SendFrameBuffer(spi_left_);
+    SendFrameBuffer(spi_right_);
+}
+
+void CatEyeDisplay::DoBlink() {
+    if (eye_type_ != kEyeNormal) return;
+
+    EyeParams& p = params_;
+    float orig_upper = p.upper;
+    float orig_lower = p.lower;
+
+    /* 闭眼阶段（快，3帧，主要动上眼睑） */
+    static const float kClose[] = {0.55f, 0.12f, 0.0f};
+    for (int i = 0; i < 3; i++) {
+        if (blink_stop_) goto restore;
+        xSemaphoreTake(render_mtx_, portMAX_DELAY);
+        if (blink_stop_) { xSemaphoreGive(render_mtx_); goto restore; }
+        p.upper = orig_upper * kClose[i];
+        p.lower = orig_lower * (0.6f + 0.4f * kClose[i]);
+        RenderAndSend();
+        xSemaphoreGive(render_mtx_);
+    }
+
+    /* 闭合停留 */
+    vTaskDelay(pdMS_TO_TICKS(35));
+
+    /* 睁眼阶段（慢，4帧） */
+    {
+        static const float kOpen[] = {0.15f, 0.45f, 0.78f, 1.0f};
+        for (int i = 0; i < 4; i++) {
+            if (blink_stop_) goto restore;
+            xSemaphoreTake(render_mtx_, portMAX_DELAY);
+            if (blink_stop_) { xSemaphoreGive(render_mtx_); goto restore; }
+            p.upper = orig_upper * kOpen[i];
+            p.lower = orig_lower * (0.6f + 0.4f * kOpen[i]);
+            RenderAndSend();
+            xSemaphoreGive(render_mtx_);
+        }
+    }
+
+restore:
+    p.upper = orig_upper;
+    p.lower = orig_lower;
+}
+
+void CatEyeDisplay::BlinkTaskEntry(void* arg) {
+    auto* self = static_cast<CatEyeDisplay*>(arg);
+    /* 启动后等 2 秒再开始第一次眨眼 */
+    vTaskDelay(pdMS_TO_TICKS(2000));
+    while (true) {
+        /* 随机间隔 3~6 秒 */
+        int delay_ms = 3000 + (rand() % 3000);
+        vTaskDelay(pdMS_TO_TICKS(delay_ms));
+        self->DoBlink();
+    }
+}
+
+/* ================================================================
  *  Initialize
  * ================================================================ */
 void CatEyeDisplay::Initialize() {
@@ -501,6 +571,9 @@ void CatEyeDisplay::Initialize() {
         ESP_LOGE(TAG, "Failed to allocate frame buffer!");
         return;
     }
+
+    /* 创建渲染互斥锁 */
+    render_mtx_ = xSemaphoreCreateMutex();
 
     gpio_config_t io_conf = {};
     io_conf.pin_bit_mask = (1ULL << EYE_PIN_DC) | (1ULL << EYE_PIN_RST);
@@ -551,6 +624,9 @@ void CatEyeDisplay::Initialize() {
 
     SetEmotion("neutral");
 
+    /* 启动眨眼后台任务 */
+    xTaskCreate(BlinkTaskEntry, "eye_blink", 4096, this, 1, &blink_task_);
+
     ESP_LOGI(TAG, "Cat eye displays ready!");
 }
 
@@ -566,59 +642,61 @@ void CatEyeDisplay::SetEmotion(const std::string& emotion) {
 
     ESP_LOGI(TAG, "Eye emotion: %s", emotion.c_str());
 
+    /* 打断正在进行的眨眼动画 */
+    blink_stop_ = true;
+    xSemaphoreTake(render_mtx_, portMAX_DELAY);
+    blink_stop_ = false;
+
     if (emotion == "happy" || emotion == "laughing" || emotion == "funny") {
-        /* 开心：眯眯眼 ^_^ */
+        eye_type_ = kEyeClosed;
         DrawClosedEye();
         SendFrameBuffer(spi_left_);
         SendFrameBuffer(spi_right_);
 
     } else if (emotion == "love" || emotion == "heart_eyes") {
-        /* 爱心眼 */
+        eye_type_ = kEyeHeart;
         DrawHeartEye();
         SendFrameBuffer(spi_left_);
         SendFrameBuffer(spi_right_);
 
     } else if (emotion == "angry" || emotion == "hateful") {
-        /* 愤怒：火红虹膜、极细瞳孔、眉毛下压 */
-        DrawCatEye(230, 100, 20, 0.08f, 0, 0, 0.7f, 0.85f, 0.75f);
-        SendFrameBuffer(spi_left_);
-        SendFrameBuffer(spi_right_);
+        eye_type_ = kEyeNormal;
+        params_ = {180, 90, 100, 0.15f, 0, 0, 0.7f, 0.85f, 0.75f};
+        RenderAndSend();
 
     } else if (emotion == "sad" || emotion == "crying") {
-        /* 伤心：冷色虹膜、瞳孔略大、上眼睑下垂、微微向下看 */
-        DrawCatEye(110, 150, 200, 0.6f, 0, 0.2f, 0.6f, 0.9f, -0.2f);
-        SendFrameBuffer(spi_left_);
-        SendFrameBuffer(spi_right_);
+        eye_type_ = kEyeNormal;
+        params_ = {75, 120, 185, 0.75f, 0, 0.2f, 0.6f, 0.9f, -0.2f};
+        RenderAndSend();
 
     } else if (emotion == "surprised" || emotion == "shocked") {
-        /* 惊讶：瞳孔全开（圆形）、眼睛大睁 */
-        DrawCatEye(160, 210, 40, 0.95f, 0, 0, 1.0f, 1.0f, 0);
-        SendFrameBuffer(spi_left_);
-        SendFrameBuffer(spi_right_);
+        eye_type_ = kEyeNormal;
+        params_ = {100, 160, 210, 0.95f, 0, 0, 1.0f, 1.0f, 0};
+        RenderAndSend();
 
     } else if (emotion == "sleepy" || emotion == "tired") {
-        /* 犯困：半闭眼，能看到一丝虹膜和细瞳 */
-        DrawCatEye(170, 195, 35, 0.2f, 0, 0.1f, 0.3f, 0.35f, 0);
-        SendFrameBuffer(spi_left_);
-        SendFrameBuffer(spi_right_);
+        eye_type_ = kEyeNormal;
+        params_ = {80, 125, 165, 0.55f, 0, 0.1f, 0.3f, 0.35f, 0};
+        RenderAndSend();
 
     } else if (emotion == "thinking" || emotion == "confused") {
-        /* 思考：看向右上方 */
-        DrawCatEye(175, 200, 40, 0.4f, 0.4f, -0.35f, 0.85f, 0.95f, 0);
-        SendFrameBuffer(spi_left_);
-        SendFrameBuffer(spi_right_);
+        eye_type_ = kEyeNormal;
+        params_ = {90, 140, 180, 0.6f, 0.4f, -0.35f, 0.85f, 0.95f, 0};
+        RenderAndSend();
 
     } else if (emotion == "wink") {
-        /* 眨眼：左眼闭、右眼开 */
+        eye_type_ = kEyeClosed;  /* 不触发自动眨眼 */
         DrawClosedEye();
         SendFrameBuffer(spi_left_);
-        DrawCatEye(175, 200, 40, 0.4f, 0, 0, 0.9f, 0.95f, 0);
+        DrawCatEye(90, 140, 180, 0.65f, 0, 0, 0.9f, 0.95f, 0);
         SendFrameBuffer(spi_right_);
 
     } else {
-        /* 默认待命：经典绿色猫眼、放松的竖瞳 */
-        DrawCatEye(175, 200, 40, 0.3f, 0, 0, 0.9f, 0.95f, 0);
-        SendFrameBuffer(spi_left_);
-        SendFrameBuffer(spi_right_);
+        /* 默认待命：钢蓝灰猫眼、大圆瞳孔 */
+        eye_type_ = kEyeNormal;
+        params_ = {90, 140, 180, 0.7f, 0, 0, 0.95f, 0.98f, 0};
+        RenderAndSend();
     }
+
+    xSemaphoreGive(render_mtx_);
 }

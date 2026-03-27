@@ -907,4 +907,18 @@ menu "TAIJIPAI_S3_CONFIG"
         启动双声道
 endmenu
 
+menu "TopSky Robot Extensions"
+    depends on BOARD_TYPE_BREAD_COMPACT_WIFI_LCD
+
+    config ENABLE_4G
+        bool "Enable 4G Module (ML307R-DL)"
+        default n
+        help
+            Use ML307R-DL 4G module instead of WiFi for network connectivity.
+            When enabled, the board will use DualNetworkBoard (4G + WiFi fallback).
+            GPIO11=TX, GPIO12=RX, 921600bps. Only enable after hardware is connected.
+
+
+endmenu
+
 endmenu
