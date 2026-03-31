@@ -14,6 +14,7 @@
 #include "head_gimbal.h"
 #include "esp32_camera.h"
 #include "pca9685.h"
+#include "audio/sfx_assets.h"
 #include "presence_sensor.h"
 
 #include <esp_log.h>
@@ -21,9 +22,208 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
-#include <string>
+#include <algorithm>
 
 #define TAG "CompactWifiBoardLCD"
+
+namespace {
+
+constexpr int kMotionTickMs = 20;
+
+struct ServoPose {
+    int head_pan;
+    int head_tilt;
+    int tail_horizontal;
+    int tail_vertical;
+};
+
+struct ServoOffset {
+    int head_pan = 0;
+    int head_tilt = 0;
+    int tail_horizontal = 0;
+    int tail_vertical = 0;
+};
+
+struct MotionSegment {
+    ServoOffset offset;
+    int move_ms;
+    int hold_ms;
+};
+
+constexpr ServoPose kServoZeroPose = {
+    .head_pan = 50,
+    .head_tilt = 85,
+    .tail_horizontal = 5,
+    .tail_vertical = 0,
+};
+
+static int ClampAngle(int angle) {
+    return std::clamp(angle, 0, 180);
+}
+
+static ServoPose AddOffset(const ServoPose& base, const ServoOffset& offset) {
+    return {
+        .head_pan = ClampAngle(base.head_pan + offset.head_pan),
+        .head_tilt = ClampAngle(base.head_tilt + offset.head_tilt),
+        .tail_horizontal = ClampAngle(base.tail_horizontal + offset.tail_horizontal),
+        .tail_vertical = ClampAngle(base.tail_vertical + offset.tail_vertical),
+    };
+}
+
+static ServoPose CapturePose(HeadGimbal* head, TailServo* tail) {
+    ServoPose pose = kServoZeroPose;
+    if (head) {
+        pose.head_pan = head->pan_angle();
+        pose.head_tilt = head->tilt_angle();
+    }
+    if (tail) {
+        pose.tail_horizontal = tail->horizontal_angle();
+        pose.tail_vertical = tail->vertical_angle();
+    }
+    return pose;
+}
+
+static void ApplyPoseInstant(HeadGimbal* head, TailServo* tail, const ServoPose& pose) {
+    if (head) {
+        head->SetPan(pose.head_pan);
+        head->SetTilt(pose.head_tilt);
+    }
+    if (tail) {
+        tail->SetHorizontal(pose.tail_horizontal);
+        tail->SetVertical(pose.tail_vertical);
+    }
+}
+
+static void ApplyPoseSmooth(HeadGimbal* head, TailServo* tail, const ServoPose& target, int duration_ms) {
+    ServoPose start = CapturePose(head, tail);
+    int steps = std::max(1, duration_ms / kMotionTickMs);
+    for (int step = 1; step <= steps; ++step) {
+        auto lerp = [step, steps](int from, int to) {
+            return from + (to - from) * step / steps;
+        };
+        ServoPose current = {
+            .head_pan = lerp(start.head_pan, target.head_pan),
+            .head_tilt = lerp(start.head_tilt, target.head_tilt),
+            .tail_horizontal = lerp(start.tail_horizontal, target.tail_horizontal),
+            .tail_vertical = lerp(start.tail_vertical, target.tail_vertical),
+        };
+        ApplyPoseInstant(head, tail, current);
+        vTaskDelay(pdMS_TO_TICKS(kMotionTickMs));
+    }
+}
+
+static void RunMotionSegment(HeadGimbal* head, TailServo* tail, const ServoPose& base, const MotionSegment& segment) {
+    ApplyPoseSmooth(head, tail, AddOffset(base, segment.offset), segment.move_ms);
+    if (segment.hold_ms > 0) {
+        vTaskDelay(pdMS_TO_TICKS(segment.hold_ms));
+    }
+}
+
+static void ApplyZeroPose(HeadGimbal* head, TailServo* tail) {
+    ApplyPoseInstant(head, tail, kServoZeroPose);
+}
+
+static void PlayTouchSfx(TouchLevel level) {
+    auto& app = Application::GetInstance();
+    auto state = app.GetDeviceState();
+    if (!(state == kDeviceStateIdle || state == kDeviceStateStarting)) {
+        return;
+    }
+
+    if (level == TouchLevel::kLight) {
+        app.PlaySound(SfxSounds::OGG_MEOW_SOFT);
+    } else if (level == TouchLevel::kMedium) {
+        app.PlaySound(SfxSounds::OGG_MEOW_CUTE);
+    } else {
+        app.PlaySound(SfxSounds::OGG_MEOW_LOUD);
+    }
+}
+
+static void RunTouchReaction(TouchLevel level, CatEyeDisplay* eyes, HeadGimbal* head, TailServo* tail, const ServoPose& base_pose) {
+    if (!eyes) {
+        return;
+    }
+
+    PlayTouchSfx(level);
+
+    if (level == TouchLevel::kLight) {
+        eyes->SetEmotion("happy");
+        RunMotionSegment(head, tail, base_pose, {{0, -8, 0, +10}, 160, 80});
+        RunMotionSegment(head, tail, base_pose, {{0, -10, +18, +12}, 180, 70});
+        RunMotionSegment(head, tail, base_pose, {{0, -10, -18, +12}, 220, 70});
+        RunMotionSegment(head, tail, base_pose, {{0, -9, +14, +10}, 220, 60});
+        RunMotionSegment(head, tail, base_pose, {{0, -6, 0, +6}, 240, 120});
+    } else if (level == TouchLevel::kMedium) {
+        eyes->SetEmotion("love");
+        RunMotionSegment(head, tail, base_pose, {{-6, -14, 0, +16}, 180, 90});
+        RunMotionSegment(head, tail, base_pose, {{-4, -16, +26, +22}, 200, 80});
+        RunMotionSegment(head, tail, base_pose, {{+2, -14, -26, +22}, 230, 80});
+        RunMotionSegment(head, tail, base_pose, {{-2, -12, +22, +20}, 230, 80});
+        RunMotionSegment(head, tail, base_pose, {{0, -10, 0, +14}, 260, 140});
+    } else {
+        eyes->SetEmotion("surprised");
+        RunMotionSegment(head, tail, base_pose, {{-10, -20, 0, +26}, 160, 100});
+        RunMotionSegment(head, tail, base_pose, {{-6, -16, +14, +30}, 220, 90});
+        RunMotionSegment(head, tail, base_pose, {{+4, -10, -10, +24}, 260, 100});
+        RunMotionSegment(head, tail, base_pose, {{0, -8, 0, +14}, 300, 180});
+    }
+}
+
+struct TouchReactionContext {
+    CatEyeDisplay* eyes;
+    TailServo* tail;
+    HeadGimbal* head;
+    TouchSensor* sensor;
+    bool* touch_override;
+};
+
+static void TouchReactionTask(void* arg) {
+    auto* ctx = static_cast<TouchReactionContext*>(arg);
+    TouchLevel prev_level = TouchLevel::kNone;
+    TouchLevel pending_level = TouchLevel::kNone;
+    ServoPose saved_pose = kServoZeroPose;
+    int debounce_count = 0;
+    constexpr int kDebounceThreshold = 2;
+    constexpr int kPollIntervalMs = 50;
+
+    while (true) {
+        int raw = 0;
+        TouchLevel level = ctx->sensor->ReadRawAndLevel(raw);
+
+        if (level != prev_level) {
+            if (level == pending_level) {
+                debounce_count++;
+            } else {
+                pending_level = level;
+                debounce_count = 1;
+            }
+
+            if (debounce_count >= kDebounceThreshold) {
+                ESP_LOGI(TAG, "Touch changed: level %d -> %d, raw: %d", (int)prev_level, (int)level, raw);
+                if (level != TouchLevel::kNone) {
+                    *ctx->touch_override = true;
+                    saved_pose = CapturePose(ctx->head, ctx->tail);
+                    RunTouchReaction(level, ctx->eyes, ctx->head, ctx->tail, saved_pose);
+                } else if (*ctx->touch_override) {
+                    *ctx->touch_override = false;
+                    if (ctx->eyes) {
+                        ctx->eyes->SetEmotion("neutral");
+                    }
+                    ApplyPoseSmooth(ctx->head, ctx->tail, kServoZeroPose, 280);
+                }
+                prev_level = level;
+                debounce_count = 0;
+            }
+        } else {
+            debounce_count = 0;
+            pending_level = prev_level;
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(kPollIntervalMs));
+    }
+}
+
+} // namespace
 
 /* 无主 LCD 的显示包装：通过 NoDisplay 提供空显示，同时在 SetEmotion 时
    联动猫眼、尾巴、头部 */
@@ -41,41 +241,31 @@ public:
         if (cat_eyes_) {
             cat_eyes_->SetEmotion(emotion);
         }
-        /* 尾巴随表情联动 */
-        if (tail_) {
-            std::string emo(emotion);
-            if (emo == "happy" || emo == "laughing" || emo == "funny") {
-                tail_->Wag();
-            } else if (emo == "love" || emo == "heart_eyes") {
-                tail_->WagSlow();
-            } else if (emo == "sad" || emo == "crying") {
-                tail_->Droop();
-            } else if (emo == "surprised" || emo == "angry") {
-                tail_->Perk();
-            } else {
-                tail_->SetAngle(90);
-            }
+        if (!tail_) {
+            return;
         }
-        /* 头部随表情联动 */
-        if (head_) {
-            std::string emo(emotion);
-            if (emo == "happy" || emo == "laughing") {
-                head_->Nod();
-            } else if (emo == "sad" || emo == "crying") {
-                head_->LookDown();
-            } else if (emo == "thinking" || emo == "confused") {
-                head_->LookUp();
-            } else if (emo == "angry" || emo == "hateful") {
-                head_->Shake();
-            } else {
-                head_->LookCenter();
-            }
+
+        std::string emo(emotion);
+        ServoPose base_pose = CapturePose(head_, tail_);
+        if (emo == "happy" || emo == "laughing" || emo == "funny") {
+            RunMotionSegment(head_, tail_, base_pose, {{0, -6, 0, +8}, 160, 60});
+            RunMotionSegment(head_, tail_, base_pose, {{0, -8, +14, +10}, 180, 60});
+            RunMotionSegment(head_, tail_, base_pose, {{0, -8, -14, +10}, 210, 80});
+        } else if (emo == "love" || emo == "heart_eyes") {
+            RunMotionSegment(head_, tail_, base_pose, {{-4, -12, 0, +14}, 180, 80});
+            RunMotionSegment(head_, tail_, base_pose, {{-2, -14, +20, +18}, 220, 70});
+            RunMotionSegment(head_, tail_, base_pose, {{+2, -12, -20, +18}, 250, 90});
+            RunMotionSegment(head_, tail_, base_pose, {{0, -10, 0, +12}, 260, 100});
+        } else if (emo == "sad" || emo == "crying") {
+            ApplyPoseSmooth(head_, tail_, AddOffset(base_pose, {0, +10, 0, -8}), 260);
+        } else if (emo == "surprised" || emo == "angry") {
+            RunMotionSegment(head_, tail_, base_pose, {{-8, -16, 0, +22}, 180, 80});
+            RunMotionSegment(head_, tail_, base_pose, {{-4, -12, +10, +26}, 220, 100});
         }
     }
 };
 
 class CompactWifiBoardLCD : public WifiBoard {
-private:
 
     Button boot_button_;
     Display* display_;
@@ -121,43 +311,6 @@ private:
         head_gimbal_->Initialize();
     }
 
-    void RunServoSelfTest() {
-        if (!head_gimbal_ || !tail_servo_) return;
-
-        ESP_LOGI(TAG, "Running servo self-test: CH1(head pan) -> CH0(head tilt) -> CH2(tail H) -> CH3(tail V)");
-
-        head_gimbal_->LookCenter();
-        vTaskDelay(pdMS_TO_TICKS(250));
-
-        head_gimbal_->SetPan(60);
-        vTaskDelay(pdMS_TO_TICKS(350));
-        head_gimbal_->SetPan(120);
-        vTaskDelay(pdMS_TO_TICKS(350));
-        head_gimbal_->SetPan(90);
-        vTaskDelay(pdMS_TO_TICKS(250));
-
-        head_gimbal_->SetTilt(60);
-        vTaskDelay(pdMS_TO_TICKS(350));
-        head_gimbal_->SetTilt(120);
-        vTaskDelay(pdMS_TO_TICKS(350));
-        head_gimbal_->SetTilt(90);
-        vTaskDelay(pdMS_TO_TICKS(250));
-
-        tail_servo_->SetHorizontal(60);
-        vTaskDelay(pdMS_TO_TICKS(350));
-        tail_servo_->SetHorizontal(120);
-        vTaskDelay(pdMS_TO_TICKS(350));
-        tail_servo_->SetHorizontal(90);
-        vTaskDelay(pdMS_TO_TICKS(250));
-
-        tail_servo_->SetVertical(60);
-        vTaskDelay(pdMS_TO_TICKS(350));
-        tail_servo_->SetVertical(120);
-        vTaskDelay(pdMS_TO_TICKS(350));
-        tail_servo_->SetVertical(90);
-        vTaskDelay(pdMS_TO_TICKS(250));
-    }
-
     void InitializeDisplay() {
         display_ = new CatDisplayWithPeripherals(cat_eyes_, tail_servo_, head_gimbal_);
     }
@@ -199,7 +352,7 @@ private:
         boot_button_.OnClick([this]() {
             auto& app = Application::GetInstance();
             if (app.GetDeviceState() == kDeviceStateStarting) {
-                EnterWifiConfigMode();
+                this->EnterWifiConfigMode();
                 return;
             }
             app.ToggleChatState();
@@ -222,61 +375,16 @@ private:
         touch_sensor_ = new TouchSensor(TOUCH_SENSOR_GPIO, TOUCH_SENSOR_ADC_CHANNEL);
         touch_sensor_->Initialize();
 
-        /* 轮询任务：检测触摸并切换眼睛表情 */
-        xTaskCreate([](void* arg) {
-            auto* board = static_cast<CompactWifiBoardLCD*>(arg);
-            TouchLevel prev_level = TouchLevel::kNone;
-            TouchLevel pending_level = TouchLevel::kNone;
-            int debounce_count = 0;
-            static constexpr int kDebounceThreshold = 2;
-            static constexpr int kPollIntervalMs    = 50;
-            while (true) {
-                int raw = 0;
-                TouchLevel level = board->touch_sensor_->ReadRawAndLevel(raw);
-
-                /* 防抖：连续 N 次读到相同等级才确认变化 */
-                if (level != prev_level) {
-                    if (level == pending_level) {
-                        debounce_count++;
-                    } else {
-                        pending_level = level;
-                        debounce_count = 1;
-                    }
-                    if (debounce_count >= kDebounceThreshold) {
-                        ESP_LOGI(TAG, "Touch changed: level %d -> %d, raw: %d",
-                                 (int)prev_level, (int)level, raw);
-                        if (level != TouchLevel::kNone) {
-                            board->touch_override_ = true;
-                            if (level == TouchLevel::kLight) {
-                                board->cat_eyes_->SetEmotion("happy");
-                                if (board->tail_servo_) board->tail_servo_->WagSlow();
-                                if (board->head_gimbal_) board->head_gimbal_->Nod();
-                            } else if (level == TouchLevel::kMedium) {
-                                board->cat_eyes_->SetEmotion("love");
-                                if (board->tail_servo_) board->tail_servo_->Wag();
-                                if (board->head_gimbal_) board->head_gimbal_->LookUp();
-                            } else {
-                                board->cat_eyes_->SetEmotion("surprised");
-                                if (board->tail_servo_) board->tail_servo_->Perk();
-                                if (board->head_gimbal_) board->head_gimbal_->Shake();
-                            }
-                        } else if (board->touch_override_) {
-                            board->touch_override_ = false;
-                            board->cat_eyes_->SetEmotion("neutral");
-                            if (board->tail_servo_) board->tail_servo_->SetAngle(90);
-                            if (board->head_gimbal_) board->head_gimbal_->LookCenter();
-                        }
-                        prev_level = level;
-                        debounce_count = 0;
-                    }
-                } else {
-                    debounce_count = 0;
-                    pending_level = prev_level;
-                }
-                vTaskDelay(pdMS_TO_TICKS(kPollIntervalMs));
-            }
-        }, "touch_poll", 3072, this, 2, nullptr);
+        auto* ctx = new TouchReactionContext{
+            .eyes = cat_eyes_,
+            .tail = tail_servo_,
+            .head = head_gimbal_,
+            .sensor = touch_sensor_,
+            .touch_override = &touch_override_,
+        };
+        xTaskCreate(TouchReactionTask, "touch_poll", 4096, ctx, 2, nullptr);
     }
+
 
     // 物联网初始化，添加对 AI 可见设备
     void InitializeTools() {
@@ -290,7 +398,7 @@ public:
         InitializeServoBus();
         InitializeTailServo();
         InitializeHeadGimbal();
-        RunServoSelfTest();
+        ApplyZeroPose(head_gimbal_, tail_servo_);
         InitializeDisplay();
         InitializeButtons();
         InitializeTouchSensor();
@@ -387,7 +495,7 @@ private:
     }
 
     void InitializeButtons() {
-        boot_button_.OnClick([this]() {
+        boot_button_.OnClick([]() {
             auto& app = Application::GetInstance();
             if (app.GetDeviceState() == kDeviceStateStarting) {
                 return;
@@ -396,10 +504,21 @@ private:
         });
     }
 
+
     void InitializeTouchSensor() {
         touch_sensor_ = new TouchSensor(TOUCH_SENSOR_GPIO, TOUCH_SENSOR_ADC_CHANNEL);
         touch_sensor_->Initialize();
+
+        auto* ctx = new TouchReactionContext{
+            .eyes = cat_eyes_,
+            .tail = tail_servo_,
+            .head = head_gimbal_,
+            .sensor = touch_sensor_,
+            .touch_override = &touch_override_,
+        };
+        xTaskCreate(TouchReactionTask, "touch_poll", 4096, ctx, 2, nullptr);
     }
+
 
     void InitializeCamera() {
         camera_config_t config = {};
@@ -450,6 +569,7 @@ public:
         InitializeServoBus();
         InitializeTailServo();
         InitializeHeadGimbal();
+        ApplyZeroPose(head_gimbal_, tail_servo_);
         InitializeDisplay();
         InitializeButtons();
         InitializeTouchSensor();
