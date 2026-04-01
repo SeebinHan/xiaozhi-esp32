@@ -148,24 +148,105 @@ static void RunTouchReaction(TouchLevel level, CatEyeDisplay* eyes, HeadGimbal* 
 
     if (level == TouchLevel::kLight) {
         eyes->SetEmotion("happy");
-        RunMotionSegment(head, tail, base_pose, {{0, -8, 0, +10}, 160, 80});
-        RunMotionSegment(head, tail, base_pose, {{0, -10, +18, +12}, 180, 70});
-        RunMotionSegment(head, tail, base_pose, {{0, -10, -18, +12}, 220, 70});
-        RunMotionSegment(head, tail, base_pose, {{0, -9, +14, +10}, 220, 60});
-        RunMotionSegment(head, tail, base_pose, {{0, -6, 0, +6}, 240, 120});
+        RunMotionSegment(head, tail, base_pose, {{0, -8, 0, +14}, 160, 80});
+        RunMotionSegment(head, tail, base_pose, {{0, -10, +26, +16}, 180, 70});
+        RunMotionSegment(head, tail, base_pose, {{0, -10, -26, +16}, 220, 70});
+        RunMotionSegment(head, tail, base_pose, {{0, -9, +20, +14}, 220, 60});
+        RunMotionSegment(head, tail, base_pose, {{0, -6, 0, +8}, 240, 120});
     } else if (level == TouchLevel::kMedium) {
         eyes->SetEmotion("love");
-        RunMotionSegment(head, tail, base_pose, {{-6, -14, 0, +16}, 180, 90});
-        RunMotionSegment(head, tail, base_pose, {{-4, -16, +26, +22}, 200, 80});
-        RunMotionSegment(head, tail, base_pose, {{+2, -14, -26, +22}, 230, 80});
-        RunMotionSegment(head, tail, base_pose, {{-2, -12, +22, +20}, 230, 80});
-        RunMotionSegment(head, tail, base_pose, {{0, -10, 0, +14}, 260, 140});
+        RunMotionSegment(head, tail, base_pose, {{-6, -14, 0, +22}, 180, 90});
+        RunMotionSegment(head, tail, base_pose, {{-4, -16, +36, +28}, 200, 80});
+        RunMotionSegment(head, tail, base_pose, {{+2, -14, -36, +28}, 230, 80});
+        RunMotionSegment(head, tail, base_pose, {{-2, -12, +28, +24}, 230, 80});
+        RunMotionSegment(head, tail, base_pose, {{0, -10, 0, +18}, 260, 140});
     } else {
         eyes->SetEmotion("surprised");
-        RunMotionSegment(head, tail, base_pose, {{-10, -20, 0, +26}, 160, 100});
-        RunMotionSegment(head, tail, base_pose, {{-6, -16, +14, +30}, 220, 90});
-        RunMotionSegment(head, tail, base_pose, {{+4, -10, -10, +24}, 260, 100});
-        RunMotionSegment(head, tail, base_pose, {{0, -8, 0, +14}, 300, 180});
+        RunMotionSegment(head, tail, base_pose, {{-10, -20, 0, +34}, 160, 100});
+        RunMotionSegment(head, tail, base_pose, {{-6, -16, +16, +38}, 220, 90});
+        RunMotionSegment(head, tail, base_pose, {{+4, -10, -14, +30}, 260, 100});
+        RunMotionSegment(head, tail, base_pose, {{0, -8, 0, +20}, 300, 180});
+    }
+}
+
+
+enum class EmotionMotionType {
+    None,
+    HeadOnly,
+    TailOnly,
+    HeadTailCombo,
+};
+
+enum class EmotionKind {
+    None,
+    Happy,
+    Love,
+    Surprised,
+    Sad,
+    Thinking,
+};
+
+struct EmotionMotion {
+    EmotionMotionType type;
+    EmotionKind kind;
+};
+
+static EmotionMotion GetEmotionMotion(const char* emotion) {
+    std::string emo = emotion ? emotion : "";
+    if (emo == "happy" || emo == "laughing" || emo == "funny") {
+        return {EmotionMotionType::TailOnly, EmotionKind::Happy};
+    }
+    if (emo == "love" || emo == "heart_eyes") {
+        return {EmotionMotionType::HeadTailCombo, EmotionKind::Love};
+    }
+    if (emo == "surprised" || emo == "angry" || emo == "hateful") {
+        return {EmotionMotionType::HeadTailCombo, EmotionKind::Surprised};
+    }
+    if (emo == "sad" || emo == "crying") {
+        return {EmotionMotionType::HeadOnly, EmotionKind::Sad};
+    }
+    if (emo == "thinking" || emo == "confused") {
+        return {EmotionMotionType::HeadOnly, EmotionKind::Thinking};
+    }
+    return {EmotionMotionType::None, EmotionKind::None};
+}
+
+static void RunEmotionReaction(const EmotionMotion& motion, HeadGimbal* head, TailServo* tail) {
+    ServoPose base_pose = CapturePose(head, tail);
+    switch (motion.type) {
+    case EmotionMotionType::TailOnly:
+        RunMotionSegment(head, tail, base_pose, {{0, 0, 0, +8}, 150, 60});
+        RunMotionSegment(head, tail, base_pose, {{0, 0, +14, +10}, 170, 60});
+        RunMotionSegment(head, tail, base_pose, {{0, 0, -14, +10}, 210, 80});
+        RunMotionSegment(head, tail, base_pose, {{0, 0, +10, +8}, 220, 80});
+        RunMotionSegment(head, tail, base_pose, {{0, 0, 0, +4}, 220, 100});
+        ApplyPoseSmooth(head, tail, kServoZeroPose, 260);
+        break;
+    case EmotionMotionType::HeadOnly:
+        if (motion.kind == EmotionKind::Sad) {
+            RunMotionSegment(head, tail, base_pose, {{0, +12, 0, -6}, 220, 220});
+        } else {
+            RunMotionSegment(head, tail, base_pose, {{-8, -6, 0, 0}, 200, 120});
+            RunMotionSegment(head, tail, base_pose, {{+6, -4, 0, 0}, 240, 140});
+        }
+        ApplyPoseSmooth(head, tail, kServoZeroPose, 280);
+        break;
+    case EmotionMotionType::HeadTailCombo:
+        if (motion.kind == EmotionKind::Love) {
+            RunMotionSegment(head, tail, base_pose, {{-4, -12, 0, +14}, 180, 80});
+            RunMotionSegment(head, tail, base_pose, {{-2, -14, +20, +18}, 220, 70});
+            RunMotionSegment(head, tail, base_pose, {{+2, -12, -20, +18}, 250, 90});
+            RunMotionSegment(head, tail, base_pose, {{0, -10, 0, +12}, 260, 100});
+        } else {
+            RunMotionSegment(head, tail, base_pose, {{-10, -18, 0, +24}, 160, 90});
+            RunMotionSegment(head, tail, base_pose, {{-6, -14, +10, +28}, 220, 90});
+            RunMotionSegment(head, tail, base_pose, {{+4, -10, -10, +20}, 260, 110});
+        }
+        ApplyPoseSmooth(head, tail, kServoZeroPose, 300);
+        break;
+    case EmotionMotionType::None:
+    default:
+        break;
     }
 }
 
@@ -226,42 +307,44 @@ static void TouchReactionTask(void* arg) {
 } // namespace
 
 /* 无主 LCD 的显示包装：通过 NoDisplay 提供空显示，同时在 SetEmotion 时
-   联动猫眼、尾巴、头部 */
+   联动猫眼显示，并在非触摸占用时触发情绪动作。 */
 class CatDisplayWithPeripherals : public NoDisplay {
 private:
     CatEyeDisplay* cat_eyes_;
     TailServo* tail_;
     HeadGimbal* head_;
+    bool* touch_override_;
+    const char* last_emotion_ = nullptr;
 public:
-    CatDisplayWithPeripherals(CatEyeDisplay* eyes, TailServo* tail, HeadGimbal* head)
-        : cat_eyes_(eyes), tail_(tail), head_(head) {}
+    CatDisplayWithPeripherals(CatEyeDisplay* eyes, TailServo* tail, HeadGimbal* head, bool* touch_override)
+        : cat_eyes_(eyes), tail_(tail), head_(head), touch_override_(touch_override) {}
 
     void SetEmotion(const char* emotion) override {
         NoDisplay::SetEmotion(emotion);
         if (cat_eyes_) {
             cat_eyes_->SetEmotion(emotion);
         }
-        if (!tail_) {
+
+        if (!emotion || !tail_ || !head_) {
+            last_emotion_ = emotion;
             return;
         }
 
-        std::string emo(emotion);
-        ServoPose base_pose = CapturePose(head_, tail_);
-        if (emo == "happy" || emo == "laughing" || emo == "funny") {
-            RunMotionSegment(head_, tail_, base_pose, {{0, -6, 0, +8}, 160, 60});
-            RunMotionSegment(head_, tail_, base_pose, {{0, -8, +14, +10}, 180, 60});
-            RunMotionSegment(head_, tail_, base_pose, {{0, -8, -14, +10}, 210, 80});
-        } else if (emo == "love" || emo == "heart_eyes") {
-            RunMotionSegment(head_, tail_, base_pose, {{-4, -12, 0, +14}, 180, 80});
-            RunMotionSegment(head_, tail_, base_pose, {{-2, -14, +20, +18}, 220, 70});
-            RunMotionSegment(head_, tail_, base_pose, {{+2, -12, -20, +18}, 250, 90});
-            RunMotionSegment(head_, tail_, base_pose, {{0, -10, 0, +12}, 260, 100});
-        } else if (emo == "sad" || emo == "crying") {
-            ApplyPoseSmooth(head_, tail_, AddOffset(base_pose, {0, +10, 0, -8}), 260);
-        } else if (emo == "surprised" || emo == "angry") {
-            RunMotionSegment(head_, tail_, base_pose, {{-8, -16, 0, +22}, 180, 80});
-            RunMotionSegment(head_, tail_, base_pose, {{-4, -12, +10, +26}, 220, 100});
+        if (touch_override_ && *touch_override_) {
+            last_emotion_ = emotion;
+            return;
         }
+
+        if (last_emotion_ && std::string(last_emotion_) == emotion) {
+            return;
+        }
+        last_emotion_ = emotion;
+
+        EmotionMotion motion = GetEmotionMotion(emotion);
+        if (motion.type == EmotionMotionType::None) {
+            return;
+        }
+        RunEmotionReaction(motion, head_, tail_);
     }
 };
 
@@ -312,7 +395,7 @@ class CompactWifiBoardLCD : public WifiBoard {
     }
 
     void InitializeDisplay() {
-        display_ = new CatDisplayWithPeripherals(cat_eyes_, tail_servo_, head_gimbal_);
+        display_ = new CatDisplayWithPeripherals(cat_eyes_, tail_servo_, head_gimbal_, &touch_override_);
     }
 
     void InitializeCamera() {
@@ -491,7 +574,7 @@ private:
     }
 
     void InitializeDisplay() {
-        display_ = new CatDisplayWithPeripherals(cat_eyes_, tail_servo_, head_gimbal_);
+        display_ = new CatDisplayWithPeripherals(cat_eyes_, tail_servo_, head_gimbal_, &touch_override_);
     }
 
     void InitializeButtons() {

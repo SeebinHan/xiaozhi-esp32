@@ -648,16 +648,16 @@ void CatEyeDisplay::SetEmotion(const std::string& emotion) {
     blink_stop_ = false;
 
     if (emotion == "happy" || emotion == "laughing" || emotion == "funny") {
-        eye_type_ = kEyeClosed;
-        DrawClosedEye();
-        SendFrameBuffer(spi_left_);
-        SendFrameBuffer(spi_right_);
+        /* 真实感开心：瞳孔略放大，眼裂略柔和，轻微偏视线 */
+        eye_type_ = kEyeNormal;
+        params_ = {100, 150, 190, 0.78f, 0.18f, -0.05f, 0.88f, 0.98f, -0.05f};
+        RenderAndSend();
 
     } else if (emotion == "love" || emotion == "heart_eyes") {
-        eye_type_ = kEyeHeart;
-        DrawHeartEye();
-        SendFrameBuffer(spi_left_);
-        SendFrameBuffer(spi_right_);
+        /* 真实感喜欢：更柔和、更专注，避免爱心眼卡通效果 */
+        eye_type_ = kEyeNormal;
+        params_ = {110, 155, 195, 0.86f, 0.10f, -0.02f, 0.82f, 0.97f, -0.08f};
+        RenderAndSend();
 
     } else if (emotion == "angry" || emotion == "hateful") {
         eye_type_ = kEyeNormal;
@@ -670,8 +670,9 @@ void CatEyeDisplay::SetEmotion(const std::string& emotion) {
         RenderAndSend();
 
     } else if (emotion == "surprised" || emotion == "shocked") {
+        /* 真实感惊讶：眼裂略开大、瞳孔稍收、视线定住，不做夸张卡通大眼 */
         eye_type_ = kEyeNormal;
-        params_ = {100, 160, 210, 0.95f, 0, 0, 1.0f, 1.0f, 0};
+        params_ = {105, 160, 205, 0.52f, 0.0f, -0.02f, 1.02f, 1.00f, 0.02f};
         RenderAndSend();
 
     } else if (emotion == "sleepy" || emotion == "tired") {
@@ -685,14 +686,14 @@ void CatEyeDisplay::SetEmotion(const std::string& emotion) {
         RenderAndSend();
 
     } else if (emotion == "wink") {
-        eye_type_ = kEyeClosed;  /* 不触发自动眨眼 */
+        eye_type_ = kEyeClosed;
         DrawClosedEye();
         SendFrameBuffer(spi_left_);
         DrawCatEye(90, 140, 180, 0.65f, 0, 0, 0.9f, 0.95f, 0);
         SendFrameBuffer(spi_right_);
 
     } else {
-        /* 默认待命：钢蓝灰猫眼、大圆瞳孔 */
+        /* 默认待命：真实感中性眼神 */
         eye_type_ = kEyeNormal;
         params_ = {90, 140, 180, 0.7f, 0, 0, 0.95f, 0.98f, 0};
         RenderAndSend();
