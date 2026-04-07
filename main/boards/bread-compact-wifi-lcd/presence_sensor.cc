@@ -30,6 +30,11 @@ void PresenceSensor::OnPresenceDetected(std::function<void()> callback) {
     on_detected_ = std::move(callback);
 }
 
+void PresenceSensor::SetEnabled(bool enabled) {
+    enabled_.store(enabled, std::memory_order_relaxed);
+    ESP_LOGI(TAG, "Presence sensor %s", enabled ? "enabled" : "disabled");
+}
+
 void PresenceSensor::PollTask(void* arg) {
     auto* self = static_cast<PresenceSensor*>(arg);
     bool last_present = false;
@@ -45,12 +50,15 @@ void PresenceSensor::PollTask(void* arg) {
             ESP_LOGI(TAG, "GPIO%d: %s", self->gpio_, present ? "有人" : "无人");
         }
 
-        // 上升沿（从无人→有人）且超过重触发间隔，才调用回调
-        if (present && !last_present) {
+        // 有人且已启用：上升沿立即触发，持续在场则按 retrigger 间隔重触发
+        if (present && self->enabled_.load(std::memory_order_relaxed)) {
             TickType_t now = xTaskGetTickCount();
-            if ((now - last_trigger_tick) * portTICK_PERIOD_MS >= kRetriggerIntervalMs) {
+            bool is_edge = !last_present;
+            bool retrigger_elapsed = last_trigger_tick != 0 &&
+                (now - last_trigger_tick) * portTICK_PERIOD_MS >= kRetriggerIntervalMs;
+            if (is_edge || retrigger_elapsed || last_trigger_tick == 0) {
                 last_trigger_tick = now;
-                ESP_LOGI(TAG, "Presence detected");
+                ESP_LOGI(TAG, "Presence detected%s", is_edge ? "" : " (retrigger)");
                 if (self->on_detected_) {
                     self->on_detected_();
                 }

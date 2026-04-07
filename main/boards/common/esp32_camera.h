@@ -44,4 +44,6 @@ public:
     virtual bool SetSwapBytes(bool enabled) override;
     virtual std::string Explain(const std::string &question) override;
     virtual std::string CaptureAndExplain(const std::string &question) override;
+    virtual std::string CaptureAndExplainToEndpoint(const std::string &endpoint_path, const std::string &question) override;
+    virtual bool HasExplainUrl() const override;
 };

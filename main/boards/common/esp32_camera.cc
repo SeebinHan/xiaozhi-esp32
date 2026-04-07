@@ -160,6 +160,38 @@ std::string Esp32Camera::CaptureAndExplain(const std::string &question) {
     return Explain(question);
 }
 
+bool Esp32Camera::HasExplainUrl() const {
+    return !explain_url_.empty();
+}
+
+std::string Esp32Camera::CaptureAndExplainToEndpoint(const std::string &endpoint_path, const std::string &question) {
+    std::lock_guard<std::mutex> lock(capture_mutex_);
+    if (explain_url_.empty()) {
+        throw std::runtime_error("Image explain URL or token is not set");
+    }
+    if (!Capture()) {
+        throw std::runtime_error("Failed to capture photo");
+    }
+    // Build new URL: keep scheme+host+port, replace path
+    auto scheme_end = explain_url_.find("://");
+    if (scheme_end == std::string::npos) {
+        throw std::runtime_error("Invalid explain URL format");
+    }
+    auto path_start = explain_url_.find('/', scheme_end + 3);
+    std::string base_url = (path_start != std::string::npos) ? explain_url_.substr(0, path_start) : explain_url_;
+
+    std::string saved_url = explain_url_;
+    explain_url_ = base_url + endpoint_path;
+    try {
+        std::string result = Explain(question);
+        explain_url_ = saved_url;
+        return result;
+    } catch (...) {
+        explain_url_ = saved_url;
+        throw;
+    }
+}
+
 std::string Esp32Camera::Explain(const std::string &question) {
     if (explain_url_.empty()) {
         throw std::runtime_error("Image explain URL or token is not set");

@@ -295,6 +295,12 @@ void Application::HandleNetworkDisconnectedEvent() {
         protocol_->CloseAudioChannel();
     }
 
+    // Reset proactive greeting state on disconnect (no cooldown penalty)
+    if (proactive_greeting_in_progress_) {
+        proactive_greeting_in_progress_ = false;
+        pending_greeting_text_.clear();
+    }
+
     // Update the status bar immediately to show the network state
     auto display = Board::GetInstance().GetDisplay();
     display->UpdateStatusBar(true);
@@ -510,7 +516,7 @@ void Application::InitializeProtocol() {
     });
     
     protocol_->OnIncomingAudio([this](std::unique_ptr<AudioStreamPacket> packet) {
-        if (GetDeviceState() == kDeviceStateSpeaking) {
+        if (!aborted_) {
             audio_service_.PushPacketToDecodeQueue(std::move(packet));
         }
     });
@@ -521,14 +527,43 @@ void Application::InitializeProtocol() {
             ESP_LOGW(TAG, "Server sample rate %d does not match device output sample rate %d, resampling may cause distortion",
                 protocol_->server_sample_rate(), codec->output_sample_rate());
         }
+        // If this was a bootstrap connection to get MCP capabilities, close and retry greeting
+        if (proactive_mcp_bootstrap_) {
+            proactive_mcp_bootstrap_ = false;
+            ESP_LOGI(TAG, "MCP bootstrap complete, closing channel and retrying greeting");
+            proactive_mcp_bootstrap_pending_retry_ = true;
+            Schedule([this]() {
+                protocol_->CloseAudioChannel(false);
+            });
+            return;
+        }
+        // If a proactive greeting is pending, send it now
+        if (!pending_greeting_text_.empty()) {
+            std::string text = std::move(pending_greeting_text_);
+            pending_greeting_text_.clear();
+            Schedule([this, text]() {
+                SetDeviceState(kDeviceStateIdle);  // connecting -> idle (no mic activation)
+                protocol_->SendProactiveGreetingRequest(text);
+                ESP_LOGI(TAG, "Sent proactive greeting: %s", text.c_str());
+            });
+        }
     });
     
     protocol_->OnAudioChannelClosed([this, &board]() {
         board.SetPowerSaveLevel(PowerSaveLevel::LOW_POWER);
-        Schedule([this]() {
+        bool was_bootstrap = proactive_mcp_bootstrap_pending_retry_;
+        proactive_mcp_bootstrap_pending_retry_ = false;
+        pending_greeting_text_.clear();
+        proactive_greeting_in_progress_ = false;
+        Schedule([this, was_bootstrap]() {
             auto display = Board::GetInstance().GetDisplay();
             display->SetChatMessage("system", "");
             SetDeviceState(kDeviceStateIdle);
+            // After MCP bootstrap, immediately retry proactive greeting
+            if (was_bootstrap) {
+                ESP_LOGI(TAG, "MCP bootstrap done, retrying proactive greeting");
+                RequestPresenceGreeting();
+            }
         });
     });
     
@@ -538,14 +573,25 @@ void Application::InitializeProtocol() {
         if (strcmp(type->valuestring, "tts") == 0) {
             auto state = cJSON_GetObjectItem(root, "state");
             if (strcmp(state->valuestring, "start") == 0) {
+                // Reset decoder immediately (on WS thread) before any audio
+                // data arrives, rather than in the speaking state handler
+                // where Schedule() delay could cause already-queued audio
+                // to be wiped.
+                audio_service_.ResetDecoder();
+                aborted_ = false;  // Immediate on WS thread so audio is accepted before Schedule runs
                 Schedule([this]() {
-                    aborted_ = false;
                     SetDeviceState(kDeviceStateSpeaking);
                 });
             } else if (strcmp(state->valuestring, "stop") == 0) {
                 Schedule([this]() {
                     if (GetDeviceState() == kDeviceStateSpeaking) {
-                        if (listening_mode_ == kListeningModeManualStop) {
+                        if (proactive_greeting_in_progress_) {
+                            // Greeting complete: enter the normal listening window
+                            // so proactive greeting behaves like a self wake-up.
+                            last_greeting_time_us_ = esp_timer_get_time();
+                            proactive_greeting_in_progress_ = false;
+                            SetListeningMode(GetDefaultListeningMode());
+                        } else if (listening_mode_ == kListeningModeManualStop) {
                             SetDeviceState(kDeviceStateIdle);
                         } else {
                             SetDeviceState(kDeviceStateListening);
@@ -680,6 +726,135 @@ void Application::DismissAlert() {
 #endif
         display->SetChatMessage("system", "");
     }
+}
+
+bool Application::IsProactiveGreetingTransportReady() const {
+    if (GetDeviceState() != kDeviceStateIdle) return false;
+    if (!protocol_) return false;
+    auto* camera = Board::GetInstance().GetCamera();
+    return camera != nullptr;
+}
+
+bool Application::CanRunProactiveGreeting() const {
+    if (!IsProactiveGreetingTransportReady()) return false;
+    if (proactive_greeting_in_progress_) return false;
+    if (last_greeting_time_us_ != 0 &&
+        (esp_timer_get_time() - last_greeting_time_us_) < kGreetingCooldownUs) return false;
+    return true;
+}
+
+void Application::RequestPresenceGreeting() {
+    Schedule([this]() {
+        if (!CanRunProactiveGreeting()) {
+            ESP_LOGI(TAG, "Proactive greeting skipped: state=%d proto=%d camera=%d inprog=%d",
+                     static_cast<int>(GetDeviceState()), protocol_ != nullptr,
+                     Board::GetInstance().GetCamera() != nullptr, proactive_greeting_in_progress_);
+            return;
+        }
+
+        auto* camera = Board::GetInstance().GetCamera();
+        if (!camera->HasExplainUrl()) {
+            // Need MCP exchange to get explain_url; open WebSocket silently
+            ESP_LOGI(TAG, "Proactive greeting: no explain_url, opening channel for MCP exchange");
+            proactive_greeting_in_progress_ = true;
+            proactive_mcp_bootstrap_ = true;
+            SetDeviceState(kDeviceStateConnecting);
+            if (!protocol_->OpenAudioChannel()) {
+                ESP_LOGW(TAG, "Proactive greeting: failed to open channel for MCP");
+                SetDeviceState(kDeviceStateIdle);
+                proactive_greeting_in_progress_ = false;
+                proactive_mcp_bootstrap_ = false;
+            }
+            // OnAudioChannelOpened will close the channel, then next presence trigger will have explain_url
+            return;
+        }
+
+        proactive_greeting_in_progress_ = true;
+        ESP_LOGI(TAG, "Start proactive greeting vision check");
+
+        xTaskCreate([](void* arg) {
+            auto* app = static_cast<Application*>(arg);
+            try {
+                auto* camera = Board::GetInstance().GetCamera();
+                std::string response = camera->CaptureAndExplainToEndpoint(
+                    "/mcp/vision/proactive-greeting",
+                    "观察画面中是否有人，判断是否适合打招呼");
+
+                cJSON* root = cJSON_Parse(response.c_str());
+                if (!root) {
+                    ESP_LOGW(TAG, "Proactive greeting: failed to parse response");
+                    app->proactive_greeting_in_progress_ = false;
+                    vTaskDelete(NULL);
+                    return;
+                }
+
+                bool should_greet = false;
+                double confidence = 0.0;
+                std::string greet_text;
+                std::string reason_code;
+
+                auto* j = cJSON_GetObjectItem(root, "should_greet");
+                if (cJSON_IsBool(j)) should_greet = cJSON_IsTrue(j);
+                j = cJSON_GetObjectItem(root, "confidence");
+                if (cJSON_IsNumber(j)) confidence = j->valuedouble;
+                j = cJSON_GetObjectItem(root, "greet_text");
+                if (cJSON_IsString(j)) greet_text = j->valuestring;
+                j = cJSON_GetObjectItem(root, "reason_code");
+                if (cJSON_IsString(j)) reason_code = j->valuestring;
+                cJSON_Delete(root);
+
+                ESP_LOGI(TAG, "Greeting vision: greet=%d conf=%.2f reason=%s text=%s",
+                    should_greet, confidence, reason_code.c_str(), greet_text.c_str());
+
+                if (!should_greet || confidence < 0.5 || greet_text.empty()) {
+                    app->proactive_greeting_in_progress_ = false;
+                    vTaskDelete(NULL);
+                    return;
+                }
+                if (greet_text.size() > 72) greet_text.resize(72);
+
+                // Schedule channel open + greeting on main thread
+                app->Schedule([app, greet_text]() {
+                    if (app->GetDeviceState() != kDeviceStateIdle) {
+                        app->proactive_greeting_in_progress_ = false;
+                        return;
+                    }
+                    app->pending_greeting_text_ = greet_text;
+
+                    if (app->protocol_->IsAudioChannelOpened()) {
+                        // Channel already open, send directly
+                        app->Schedule([app]() {
+                            std::string text = std::move(app->pending_greeting_text_);
+                            app->pending_greeting_text_.clear();
+                            app->protocol_->SendProactiveGreetingRequest(text);
+                            ESP_LOGI(TAG, "Sent proactive greeting: %s", text.c_str());
+                        });
+                    } else {
+                        // Need to open channel first; greeting sent in OnAudioChannelOpened
+                        app->SetDeviceState(kDeviceStateConnecting);
+                        app->Schedule([app]() {
+                            if (app->GetDeviceState() != kDeviceStateConnecting) {
+                                app->pending_greeting_text_.clear();
+                                app->proactive_greeting_in_progress_ = false;
+                                return;
+                            }
+                            if (!app->protocol_->OpenAudioChannel()) {
+                                ESP_LOGW(TAG, "Proactive greeting: failed to open channel");
+                                app->SetDeviceState(kDeviceStateIdle);
+                                app->pending_greeting_text_.clear();
+                                app->proactive_greeting_in_progress_ = false;
+                            }
+                            // OnAudioChannelOpened will send the greeting
+                        });
+                    }
+                });
+            } catch (const std::exception& e) {
+                ESP_LOGE(TAG, "Proactive greeting failed: %s", e.what());
+                app->proactive_greeting_in_progress_ = false;
+            }
+            vTaskDelete(NULL);
+        }, "greet_vision", 8192, this, 2, nullptr);
+    });
 }
 
 void Application::ToggleChatState() {
@@ -976,7 +1151,6 @@ void Application::HandleStateChangedEvent() {
                 // Only AFE wake word can be detected in speaking mode
                 audio_service_.EnableWakeWordDetection(audio_service_.IsAfeWakeWord());
             }
-            audio_service_.ResetDecoder();
             break;
         case kDeviceStateWifiConfiguring:
             audio_service_.EnableVoiceProcessing(false);

@@ -13,6 +13,11 @@ public:
     virtual std::string Explain(const std::string& question) = 0;
     // Unified capture + explain with mutex to prevent concurrent camera access
     virtual std::string CaptureAndExplain(const std::string& question) = 0;
+    // Capture + explain to a custom endpoint path (reusing same host/token)
+    virtual std::string CaptureAndExplainToEndpoint(const std::string& endpoint_path, const std::string& question) {
+        return CaptureAndExplain(question);
+    }
+    virtual bool HasExplainUrl() const { return false; }
 };
 
 #endif // CAMERA_H

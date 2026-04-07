@@ -126,7 +126,8 @@ static void ApplyZeroPose(HeadGimbal* head, TailServo* tail) {
 static void PlayTouchSfx(TouchLevel level) {
     auto& app = Application::GetInstance();
     auto state = app.GetDeviceState();
-    if (!(state == kDeviceStateIdle || state == kDeviceStateStarting)) {
+    if (!(state == kDeviceStateIdle || state == kDeviceStateStarting ||
+          state == kDeviceStateListening)) {
         return;
     }
 
@@ -257,6 +258,34 @@ struct TouchReactionContext {
     TouchSensor* sensor;
     bool* touch_override;
 };
+
+static void EnablePresenceSensorWhenReadyTask(void* arg) {
+    auto* sensor = static_cast<PresenceSensor*>(arg);
+    auto& app = Application::GetInstance();
+    bool was_enabled = false;
+    int stable_count = 0;
+    while (stable_count < 8) {
+        vTaskDelay(pdMS_TO_TICKS(1000));
+        if (app.IsProactiveGreetingTransportReady()) {
+            stable_count++;
+        } else {
+            stable_count = 0;
+        }
+    }
+    sensor->SetEnabled(true);
+    was_enabled = true;
+    while (true) {
+        vTaskDelay(pdMS_TO_TICKS(2000));
+        bool ready = app.IsProactiveGreetingTransportReady();
+        if (ready && !was_enabled) {
+            sensor->SetEnabled(true);
+            was_enabled = true;
+        } else if (!ready && was_enabled) {
+            sensor->SetEnabled(false);
+            was_enabled = false;
+        }
+    }
+}
 
 static void TouchReactionTask(void* arg) {
     auto* ctx = static_cast<TouchReactionContext*>(arg);
@@ -429,6 +458,7 @@ class CompactWifiBoardLCD : public WifiBoard {
         config.grab_mode = CAMERA_GRAB_WHEN_EMPTY;
         camera_ = new Esp32Camera(config);
         camera_->SetHMirror(false);
+        camera_->SetVFlip(true);
     }
 
     void InitializeButtons() {
@@ -445,13 +475,11 @@ class CompactWifiBoardLCD : public WifiBoard {
     void InitializePresenceSensor() {
         presence_sensor_ = new PresenceSensor(PRESENCE_SENSOR_GPIO);
         presence_sensor_->Initialize();
+        // Sensor starts disabled; EnablePresenceSensorWhenReadyTask enables after network+MCP ready
         presence_sensor_->OnPresenceDetected([]() {
-            auto& app = Application::GetInstance();
-            // 仅在空闲状态下主动触发对话，避免打断正在进行的交互
-            if (app.GetDeviceState() == kDeviceStateIdle) {
-                app.ToggleChatState();
-            }
+            Application::GetInstance().RequestPresenceGreeting();
         });
+        xTaskCreate(EnablePresenceSensorWhenReadyTask, "presence_arm", 2048, presence_sensor_, 1, nullptr);
     }
 
     void InitializeTouchSensor() {
@@ -631,17 +659,16 @@ private:
         config.grab_mode = CAMERA_GRAB_WHEN_EMPTY;
         camera_ = new Esp32Camera(config);
         camera_->SetHMirror(false);
+        camera_->SetVFlip(true);
     }
 
     void InitializePresenceSensor() {
         presence_sensor_ = new PresenceSensor(PRESENCE_SENSOR_GPIO);
         presence_sensor_->Initialize();
         presence_sensor_->OnPresenceDetected([]() {
-            auto& app = Application::GetInstance();
-            if (app.GetDeviceState() == kDeviceStateIdle) {
-                app.ToggleChatState();
-            }
+            Application::GetInstance().RequestPresenceGreeting();
         });
+        xTaskCreate(EnablePresenceSensorWhenReadyTask, "presence_arm", 2048, presence_sensor_, 1, nullptr);
     }
 
 public:

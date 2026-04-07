@@ -78,6 +78,17 @@ void Protocol::SendMcpMessage(const std::string& payload) {
     SendText(message);
 }
 
+void Protocol::SendProactiveGreetingRequest(const std::string& text) {
+    cJSON* msg = cJSON_CreateObject();
+    cJSON_AddStringToObject(msg, "session_id", session_id_.c_str());
+    cJSON_AddStringToObject(msg, "type", "proactive_greeting_request");
+    cJSON_AddStringToObject(msg, "text", text.c_str());
+    char* json_str = cJSON_PrintUnformatted(msg);
+    SendText(json_str);
+    free(json_str);
+    cJSON_Delete(msg);
+}
+
 void Protocol::SendVisualContext(const std::string& description) {
     std::string message = "{\"session_id\":\"" + session_id_ + "\",\"type\":\"visual_context\",\"description\":\"" + description + "\"}";
     SendText(message);

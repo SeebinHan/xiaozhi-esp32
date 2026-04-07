@@ -110,6 +110,10 @@ public:
     void SendMcpMessage(const std::string& payload);
     void SetAecMode(AecMode mode);
     AecMode GetAecMode() const { return aec_mode_; }
+
+    // Proactive greeting: presence sensor triggers vision check, then speaks if appropriate
+    void RequestPresenceGreeting();
+    bool IsProactiveGreetingTransportReady() const;
     void PlaySound(const std::string_view& sound);
     AudioService& GetAudioService() { return audio_service_; }
     
@@ -142,6 +146,15 @@ private:
     bool play_popup_on_listening_ = false;  // Flag to play popup sound after state changes to listening
     int clock_ticks_ = 0;
     TaskHandle_t activation_task_handle_ = nullptr;
+
+    // Proactive greeting state
+    int64_t last_greeting_time_us_ = 0;
+    bool proactive_greeting_in_progress_ = false;
+    bool proactive_mcp_bootstrap_ = false;
+    bool proactive_mcp_bootstrap_pending_retry_ = false;
+    std::string pending_greeting_text_;
+    static constexpr int64_t kGreetingCooldownUs = 300LL * 1000000;
+    bool CanRunProactiveGreeting() const;
 
 
     // Event handlers
