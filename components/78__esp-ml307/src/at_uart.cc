@@ -403,60 +403,39 @@ void AtUart::HandleUrc(const std::string& command, const std::vector<AtArgumentV
 }
 
 bool AtUart::DetectBaudRate(int timeout_ms) {
-    int baud_rates[] = {115200, 921600, 460800, 230400, 57600, 38400, 19200, 9600};
-    TickType_t start_time = xTaskGetTickCount();
-    TickType_t timeout_ticks = (timeout_ms == -1) ? portMAX_DELAY : pdMS_TO_TICKS(timeout_ms);
-    int round = 0;
+    constexpr int kTargetBaud = 115200;
+    constexpr int kMaxRetries = 5;
+    constexpr int kAtTimeoutMs = 500;
 
-    // After ESP32 reset (e.g. firmware flash), the modem UART may have
-    // residual data or the DMA receive path may be out of sync with the
-    // modem's transmit framing. Flush the modem's AT parser first.
-    for (int rate : {115200, 921600}) {
-        uart_set_baudrate(uart_num_, rate);
-        SendData("\r\n", 2);
-        vTaskDelay(pdMS_TO_TICKS(50));
-    }
-    uart_set_baudrate(uart_num_, 115200);
-    vTaskDelay(pdMS_TO_TICKS(500));
+    uart_set_baudrate(uart_num_, kTargetBaud);
 
-    while (true) {
-        ESP_LOGI(TAG, "Detecting baud rate...");
-        for (size_t i = 0; i < sizeof(baud_rates) / sizeof(baud_rates[0]); i++) {
-            int rate = baud_rates[i];
-            uart_set_baudrate(uart_num_, rate);
-            if (SendCommand("AT", 20)) {
-                ESP_LOGI(TAG, "Detected baud rate: %d", rate);
-                baud_rate_ = rate;
-                return true;
-            }
+    // Flush modem AT parser after ESP32 reset
+    SendData("\r\n", 2);
+    vTaskDelay(pdMS_TO_TICKS(100));
+
+    for (int attempt = 0; attempt < kMaxRetries; attempt++) {
+        ESP_LOGI(TAG, "Detecting baud rate (attempt %d/%d)...", attempt + 1, kMaxRetries);
+
+        if (SendCommand("AT", kAtTimeoutMs)) {
+            ESP_LOGI(TAG, "Detected baud rate: %d", kTargetBaud);
+            baud_rate_ = kTargetBaud;
+            return true;
         }
-        round++;
 
-        // After several failed rounds, reset the DMA receive path to
-        // re-synchronize with the modem's UART framing. This handles
-        // the case where ESP32 flash/reboot left the UHCI DMA out of
-        // sync (modem was not power-cycled).
-        if (round == 3) {
-            ESP_LOGW(TAG, "Resetting DMA receive path after %d failed rounds", round);
+        // On attempt 3, reset DMA receive path to re-sync with modem framing
+        if (attempt == 2) {
+            ESP_LOGW(TAG, "Resetting DMA receive path after %d failed attempts", attempt + 1);
             uart_uhci_.StopReceive();
             vTaskDelay(pdMS_TO_TICKS(100));
             uart_uhci_.StartReceive();
-            // Re-send \r\n to flush modem AT parser after DMA reset
-            SendData("\r\n", 2);
-            vTaskDelay(pdMS_TO_TICKS(200));
         }
 
-        // Check timeout before delay if specified
-        if (timeout_ms != -1) {
-            TickType_t elapsed = xTaskGetTickCount() - start_time;
-            if (elapsed >= timeout_ticks) {
-                ESP_LOGE(TAG, "Baud rate detection timeout");
-                return false;
-            }
-        }
-
-        vTaskDelay(pdMS_TO_TICKS(1000));
+        // Flush and retry
+        SendData("\r\n", 2);
+        vTaskDelay(pdMS_TO_TICKS(200));
     }
+
+    ESP_LOGE(TAG, "Baud rate detection failed after %d attempts", kMaxRetries);
     return false;
 }
 
