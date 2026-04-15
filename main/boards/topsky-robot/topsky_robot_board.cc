@@ -9,6 +9,7 @@
 #include "head_gimbal.h"
 #include "tail_servo.h"
 #include "pca9685.h"
+#include "cat_eye_display.h"
 #include "application.h"
 #include "assets/lang_config.h"
 
@@ -195,6 +196,7 @@ void TouchPollTask(void* arg) {
 class TopskyRobotBoard : public DualNetworkBoard {
 private:
     Esp32Camera* camera_ = nullptr;
+    CatEyeDisplay display_;
     i2c_master_bus_handle_t servo_i2c_bus_ = nullptr;
     Pca9685* servo_driver_ = nullptr;
     HeadGimbal* head_gimbal_ = nullptr;
@@ -289,6 +291,7 @@ public:
         InitializeHeadGimbal();
         InitializeTailServo();
         InitializeCamera();
+        display_.Initialize();
         InitializePresenceSensor();
         InitializeTouchSensor();
     }
@@ -311,8 +314,7 @@ public:
     }
 
     virtual Display* GetDisplay() override {
-        static NoDisplay display;
-        return &display;
+        return &display_;
     }
 
     virtual Led* GetLed() override {

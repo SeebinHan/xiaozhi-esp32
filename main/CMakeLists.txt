@@ -37,9 +37,12 @@ set(SOURCES "audio/audio_codec.cc"
             "device_state_machine.cc"
             "assets.cc"
             "main.cc"
+            "boards/topsky-robot/cat_eye_display.cc"
+            "boards/topsky-robot/cat_eye_sequences.cc"
             "boards/common/pca9685.cc"
             "boards/topsky-robot/head_gimbal.cc"
             "boards/topsky-robot/tail_servo.cc"
+            "companion/presence_coordinator.cc"
             "companion/touch_coordinator.cc"
             "boards/topsky-robot/presence_sensor.cc"
             "boards/topsky-robot/touch_sensor.cc"
@@ -236,6 +239,7 @@ elseif(CONFIG_BOARD_TYPE_XMINI_C3_4G)
     set(BUILTIN_ICON_FONT font_awesome_14_1)
 elseif(CONFIG_BOARD_TYPE_TOPSKY_ROBOT)
     set(BOARD_TYPE "topsky-robot")
+    set(DEFAULT_ASSETS_EXTRA_FILES "${CMAKE_CURRENT_SOURCE_DIR}/assets/robot_eyes")
 elseif(CONFIG_BOARD_TYPE_XMINI_C3)
     set(BOARD_TYPE "xmini-c3")
     set(BUILTIN_TEXT_FONT font_puhui_basic_14_1)
