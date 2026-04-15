@@ -82,6 +82,7 @@ public:
     virtual void SetPowerSaveLevel(PowerSaveLevel level) = 0;
     virtual std::string GetBoardJson() = 0;
     virtual std::string GetDeviceStatusJson() = 0;
+    virtual void ExecuteTouchAction(int level, int raw) { (void)level; (void)raw; }
 };
 
 #define DECLARE_BOARD(BOARD_CLASS_NAME) \

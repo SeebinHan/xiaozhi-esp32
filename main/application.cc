@@ -24,6 +24,7 @@
 Application::Application() {
     event_group_ = xEventGroupCreate();
     presence_coordinator_.reset(new PresenceCoordinator(*this));
+    touch_coordinator_.reset(new TouchCoordinator(*this));
 
 #if CONFIG_USE_DEVICE_AEC && CONFIG_USE_SERVER_AEC
 #error "CONFIG_USE_DEVICE_AEC and CONFIG_USE_SERVER_AEC cannot be enabled at the same time"
@@ -1089,6 +1090,12 @@ void Application::SubmitPresenceDetection() {
     }
 }
 
+void Application::SubmitTouchEvent(const TouchEvent& event) {
+    if (touch_coordinator_) {
+        touch_coordinator_->SubmitTouchEvent(event);
+    }
+}
+
 void Application::SetAecMode(AecMode mode) {
     aec_mode_ = mode;
     Schedule([this]() {
@@ -1199,3 +1206,36 @@ void Application::SchedulePresence(std::function<void()>&& callback) {
     Schedule(std::move(callback));
 }
 
+DeviceState Application::GetTouchDeviceState() const {
+    return GetDeviceState();
+}
+
+bool Application::IsTouchAudioIdle() const {
+    return const_cast<AudioService&>(audio_service_).IsIdle();
+}
+
+bool Application::IsTouchAudioProcessorRunning() const {
+    return audio_service_.IsAudioProcessorRunning();
+}
+
+bool Application::IsTouchPlaybackDrained() const {
+    return const_cast<AudioService&>(audio_service_).IsIdle();
+}
+
+bool Application::IsTouchAudioBackpressured() const {
+    return false;
+}
+
+bool Application::IsTouchExecutorReady() const {
+    return true;
+}
+
+void Application::DispatchTouchAction(const TouchAction& action) {
+    ESP_LOGI(TAG, "Touch action execute: level=%d raw=%d",
+             static_cast<int>(action.level), action.raw);
+    Board::GetInstance().ExecuteTouchAction(static_cast<int>(action.level), action.raw);
+}
+
+void Application::ScheduleTouch(std::function<void()>&& callback) {
+    Schedule(std::move(callback));
+}

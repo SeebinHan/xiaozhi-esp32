@@ -56,11 +56,27 @@ bool PresenceCoordinator::CanStartGreeting(const char*& reason) const {
     return true;
 }
 
+void PresenceCoordinator::MaybeLogSkippedDetection(const char* reason) {
+    int64_t now = esp_timer_get_time();
+    DeviceState state = host_.GetPresenceDeviceState();
+    bool same_reason = last_skip_reason_ != nullptr && reason != nullptr && strcmp(last_skip_reason_, reason) == 0;
+    bool same_state = last_skip_state_ == state;
+    bool within_throttle = last_skip_log_time_us_ != 0 && (now - last_skip_log_time_us_) < kSkipLogThrottleUs;
+    if (same_reason && same_state && within_throttle) {
+        return;
+    }
+
+    ESP_LOGI(TAG, "Presence detection skipped: reason=%s state=%d", reason,
+             static_cast<int>(state));
+    last_skip_reason_ = reason;
+    last_skip_state_ = state;
+    last_skip_log_time_us_ = now;
+}
+
 void PresenceCoordinator::SubmitPresenceDetection() {
     const char* reason = "unknown";
     if (!CanStartGreeting(reason)) {
-        ESP_LOGI(TAG, "Presence detection skipped: reason=%s state=%d", reason,
-                 static_cast<int>(host_.GetPresenceDeviceState()));
+        MaybeLogSkippedDetection(reason);
         return;
     }
 
@@ -69,6 +85,7 @@ void PresenceCoordinator::SubmitPresenceDetection() {
     bootstrap_retry_pending_ = false;
     pending_greeting_text_.clear();
     last_greeting_time_us_ = esp_timer_get_time();
+    last_skip_reason_ = nullptr;
 
     if (!host_.HasPresenceExplainUrl()) {
         ESP_LOGI(TAG, "Presence greeting: no explain_url, opening channel for MCP bootstrap");
@@ -85,6 +102,22 @@ void PresenceCoordinator::SubmitPresenceDetection() {
     StartGreetingVisionTask();
 }
 
+bool PresenceCoordinator::BeginBootstrapVisionRetry(const char* source) {
+    if (!bootstrap_in_progress_ || !host_.HasPresenceExplainUrl()) {
+        return false;
+    }
+
+    if (source != nullptr) {
+        ESP_LOGI(TAG, "Presence bootstrap %s explain_url, closing channel and retrying vision", source);
+    }
+    bootstrap_in_progress_ = false;
+    bootstrap_retry_pending_ = true;
+    host_.SchedulePresence([this]() {
+        host_.ClosePresenceAudioChannel(false);
+    });
+    return true;
+}
+
 void PresenceCoordinator::OnPresenceAudioChannelOpened() {
     if (!bootstrap_in_progress_) {
         if (!pending_greeting_text_.empty()) {
@@ -96,14 +129,7 @@ void PresenceCoordinator::OnPresenceAudioChannelOpened() {
         return;
     }
 
-    if (host_.HasPresenceExplainUrl()) {
-        ESP_LOGI(TAG, "Presence bootstrap acquired explain_url, closing channel and retrying vision");
-        bootstrap_in_progress_ = false;
-        bootstrap_retry_pending_ = true;
-        host_.SchedulePresence([this]() {
-            host_.ClosePresenceAudioChannel(false);
-        });
-    }
+    BeginBootstrapVisionRetry(nullptr);
 }
 
 void PresenceCoordinator::OnPresenceAudioChannelClosed() {
@@ -123,16 +149,7 @@ void PresenceCoordinator::OnPresenceAudioChannelClosed() {
 }
 
 void PresenceCoordinator::OnPresenceMcpStateUpdated() {
-    if (!bootstrap_in_progress_ || !host_.HasPresenceExplainUrl()) {
-        return;
-    }
-
-    ESP_LOGI(TAG, "Presence bootstrap MCP updated explain_url, closing channel and retrying vision");
-    bootstrap_in_progress_ = false;
-    bootstrap_retry_pending_ = true;
-    host_.SchedulePresence([this]() {
-        host_.ClosePresenceAudioChannel(false);
-    });
+    BeginBootstrapVisionRetry("MCP updated");
 }
 
 void PresenceCoordinator::StartGreetingVisionTask() {

@@ -2,6 +2,7 @@
 #define _BOARD_CONFIG_H_
 
 #include <driver/gpio.h>
+#include <esp_adc/adc_oneshot.h>
 
 #define AUDIO_INPUT_SAMPLE_RATE  16000
 #define AUDIO_OUTPUT_SAMPLE_RATE 24000
@@ -42,5 +43,7 @@
 #define ML307_DTR_PIN GPIO_NUM_NC
 
 #define PRESENCE_SENSOR_GPIO GPIO_NUM_47
+#define TOUCH_SENSOR_GPIO GPIO_NUM_10
+#define TOUCH_SENSOR_ADC_CHANNEL ADC_CHANNEL_9
 
 #endif // _BOARD_CONFIG_H_

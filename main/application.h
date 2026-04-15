@@ -19,6 +19,7 @@
 #include "device_state.h"
 #include "device_state_machine.h"
 #include "companion/presence_coordinator.h"
+#include "companion/touch_coordinator.h"
 
 // Main event bits
 #define MAIN_EVENT_SCHEDULE             (1 << 0)
@@ -41,7 +42,7 @@ enum AecMode {
     kAecOnServerSide,
 };
 
-class Application : public PresenceCoordinatorHost {
+class Application : public PresenceCoordinatorHost, public TouchCoordinatorHost {
 public:
     static Application& GetInstance() {
         static Application instance;
@@ -69,6 +70,7 @@ public:
     bool CanEnterSleepMode();
     void SendMcpMessage(const std::string& payload);
     void SubmitPresenceDetection();
+    void SubmitTouchEvent(const TouchEvent& event);
     void SetAecMode(AecMode mode);
     AecMode GetAecMode() const { return aec_mode_; }
     void PlaySound(const std::string_view& sound);
@@ -89,6 +91,15 @@ public:
     void SendPresenceGreetingText(const std::string& text) override;
     void SchedulePresence(std::function<void()>&& callback) override;
 
+    DeviceState GetTouchDeviceState() const override;
+    bool IsTouchAudioIdle() const override;
+    bool IsTouchAudioProcessorRunning() const override;
+    bool IsTouchPlaybackDrained() const override;
+    bool IsTouchAudioBackpressured() const override;
+    bool IsTouchExecutorReady() const override;
+    void DispatchTouchAction(const TouchAction& action) override;
+    void ScheduleTouch(std::function<void()>&& callback) override;
+
 private:
     Application();
     ~Application();
@@ -105,6 +116,7 @@ private:
     AudioService audio_service_;
     std::unique_ptr<Ota> ota_;
     std::unique_ptr<PresenceCoordinator> presence_coordinator_;
+    std::unique_ptr<TouchCoordinator> touch_coordinator_;
 
     bool has_server_time_ = false;
     bool aborted_ = false;

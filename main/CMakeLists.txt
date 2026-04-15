@@ -37,8 +37,12 @@ set(SOURCES "audio/audio_codec.cc"
             "device_state_machine.cc"
             "assets.cc"
             "main.cc"
-            "companion/presence_coordinator.cc"
+            "boards/common/pca9685.cc"
+            "boards/topsky-robot/head_gimbal.cc"
+            "boards/topsky-robot/tail_servo.cc"
+            "companion/touch_coordinator.cc"
             "boards/topsky-robot/presence_sensor.cc"
+            "boards/topsky-robot/touch_sensor.cc"
             )
 
 set(INCLUDE_DIRS "." "display" "display/lvgl_display" "display/lvgl_display/jpg" "audio" "audio/demuxer" "protocols")
@@ -918,6 +922,11 @@ if(NOT LANG_DIR STREQUAL "en-US")
 endif()
 
 file(GLOB COMMON_SOUNDS ${CMAKE_CURRENT_SOURCE_DIR}/assets/common/*.ogg)
+list(APPEND COMMON_SOUNDS
+    ${CMAKE_CURRENT_SOURCE_DIR}/assets/common/meow_soft.ogg
+    ${CMAKE_CURRENT_SOURCE_DIR}/assets/common/meow_cute.ogg
+    ${CMAKE_CURRENT_SOURCE_DIR}/assets/common/meow_loud.ogg
+)
 
 # If target chip is ESP32, exclude specific files to avoid build errors
 if(CONFIG_IDF_TARGET_ESP32)
