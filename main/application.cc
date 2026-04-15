@@ -9,6 +9,7 @@
 #include "mcp_server.h"
 #include "assets.h"
 #include "settings.h"
+#include "companion/presence_coordinator.h"
 
 #include <cstring>
 #include <esp_log.h>
@@ -22,6 +23,7 @@
 
 Application::Application() {
     event_group_ = xEventGroupCreate();
+    presence_coordinator_.reset(new PresenceCoordinator(*this));
 
 #if CONFIG_USE_DEVICE_AEC && CONFIG_USE_SERVER_AEC
 #error "CONFIG_USE_DEVICE_AEC and CONFIG_USE_SERVER_AEC cannot be enabled at the same time"
@@ -507,17 +509,23 @@ void Application::InitializeProtocol() {
             ESP_LOGW(TAG, "Server sample rate %d does not match device output sample rate %d, resampling may cause distortion",
                 protocol_->server_sample_rate(), codec->output_sample_rate());
         }
+        if (presence_coordinator_) {
+            presence_coordinator_->OnPresenceAudioChannelOpened();
+        }
     });
-    
+
     protocol_->OnAudioChannelClosed([this, &board]() {
         board.SetPowerSaveLevel(PowerSaveLevel::LOW_POWER);
+        if (presence_coordinator_) {
+            presence_coordinator_->OnPresenceAudioChannelClosed();
+        }
         Schedule([this]() {
             auto display = Board::GetInstance().GetDisplay();
             display->SetChatMessage("system", "");
             SetDeviceState(kDeviceStateIdle);
         });
     });
-    
+
     protocol_->OnIncomingJson([this, display](const cJSON* root) {
         // Parse JSON data
         auto type = cJSON_GetObjectItem(root, "type");
@@ -566,6 +574,9 @@ void Application::InitializeProtocol() {
             auto payload = cJSON_GetObjectItem(root, "payload");
             if (cJSON_IsObject(payload)) {
                 McpServer::GetInstance().ParseMessage(payload);
+            }
+            if (presence_coordinator_) {
+                presence_coordinator_->OnPresenceMcpStateUpdated();
             }
         } else if (strcmp(type->valuestring, "system") == 0) {
             auto command = cJSON_GetObjectItem(root, "command");
@@ -1072,6 +1083,12 @@ void Application::SendMcpMessage(const std::string& payload) {
     });
 }
 
+void Application::SubmitPresenceDetection() {
+    if (presence_coordinator_) {
+        presence_coordinator_->SubmitPresenceDetection();
+    }
+}
+
 void Application::SetAecMode(AecMode mode) {
     aec_mode_ = mode;
     Schedule([this]() {
@@ -1112,5 +1129,73 @@ void Application::ResetProtocol() {
         // Reset protocol
         protocol_.reset();
     });
+}
+
+DeviceState Application::GetPresenceDeviceState() const {
+    return GetDeviceState();
+}
+
+bool Application::IsPresenceAudioIdle() const {
+    return const_cast<AudioService&>(audio_service_).IsIdle();
+}
+
+bool Application::IsPresenceAudioProcessorRunning() const {
+    return audio_service_.IsAudioProcessorRunning();
+}
+
+bool Application::IsPresencePlaybackDrained() const {
+    return const_cast<AudioService&>(audio_service_).IsIdle();
+}
+
+bool Application::IsPresenceAudioBackpressured() const {
+    return false;
+}
+
+bool Application::IsPresenceTransportReady() const {
+    auto* camera = Board::GetInstance().GetCamera();
+    return protocol_ != nullptr && camera != nullptr && camera->IsAvailable();
+}
+
+bool Application::IsPresenceAudioChannelOpened() const {
+    return protocol_ != nullptr && protocol_->IsAudioChannelOpened();
+}
+
+bool Application::HasPresenceExplainUrl() const {
+    auto* camera = Board::GetInstance().GetCamera();
+    return camera != nullptr && camera->HasExplainUrl();
+}
+
+bool Application::OpenPresenceAudioChannel() {
+    if (protocol_ == nullptr) {
+        return false;
+    }
+    return protocol_->OpenAudioChannel();
+}
+
+void Application::ClosePresenceAudioChannel(bool send_goodbye) {
+    if (protocol_ != nullptr && protocol_->IsAudioChannelOpened()) {
+        protocol_->CloseAudioChannel(send_goodbye);
+    }
+}
+
+std::string Application::CapturePresenceGreetingDecision() {
+    auto* camera = Board::GetInstance().GetCamera();
+    if (camera == nullptr) {
+        return {};
+    }
+    return camera->CaptureAndExplainToEndpoint(
+        "/mcp/vision/proactive-greeting",
+        "观察画面中是否有人，判断是否适合打招呼");
+}
+
+void Application::SendPresenceGreetingText(const std::string& text) {
+    if (protocol_ != nullptr) {
+        protocol_->SendProactiveGreetingRequest(text);
+        ESP_LOGI(TAG, "Sent proactive greeting: %s", text.c_str());
+    }
+}
+
+void Application::SchedulePresence(std::function<void()>&& callback) {
+    Schedule(std::move(callback));
 }
 

@@ -563,9 +563,11 @@ void SscmaCamera::InitializeMcpTools() {
         });
 }
 
-void SscmaCamera::SetExplainUrl(const std::string& url, const std::string& token) {
+void SscmaCamera::SetExplainUrl(const std::string& url, const std::string& token,
+                                const std::string& session_id) {
     explain_url_ = url;
     explain_token_ = token;
+    explain_session_id_ = session_id;
 }
 
 bool SscmaCamera::Capture() {
@@ -705,6 +707,9 @@ std::string SscmaCamera::Explain(const std::string& question) {
     // 配置HTTP客户端，使用分块传输编码
     http->SetHeader("Device-Id", SystemInfo::GetMacAddress().c_str());
     http->SetHeader("Client-Id", Board::GetInstance().GetUuid().c_str());
+    if (!explain_session_id_.empty()) {
+        http->SetHeader("Session-Id", explain_session_id_);
+    }
     if (!explain_token_.empty()) {
         http->SetHeader("Authorization", "Bearer " + explain_token_);
     }

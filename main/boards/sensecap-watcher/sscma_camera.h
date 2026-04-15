@@ -29,6 +29,7 @@ private:
     lv_img_dsc_t preview_image_;
     std::string explain_url_;
     std::string explain_token_;
+    std::string explain_session_id_;
     sscma_client_io_handle_t sscma_client_io_handle_;
     sscma_client_handle_t sscma_client_handle_;
     QueueHandle_t sscma_data_queue_;
@@ -63,7 +64,8 @@ public:
     ~SscmaCamera();
     void InitializeMcpTools();
 
-    virtual void SetExplainUrl(const std::string& url, const std::string& token);
+    virtual void SetExplainUrl(const std::string& url, const std::string& token,
+                               const std::string& session_id) override;
     virtual bool Capture();
     // 翻转控制函数
     virtual bool SetHMirror(bool enabled) override;

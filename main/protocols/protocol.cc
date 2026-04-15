@@ -1,6 +1,7 @@
 #include "protocol.h"
 
 #include <esp_log.h>
+#include <esp_timer.h>
 
 #define TAG "Protocol"
 
@@ -78,13 +79,54 @@ void Protocol::SendMcpMessage(const std::string& payload) {
     SendText(message);
 }
 
+void Protocol::SendProactiveGreetingRequest(const std::string& text) {
+    cJSON* msg = cJSON_CreateObject();
+    cJSON_AddStringToObject(msg, "session_id", session_id_.c_str());
+    cJSON_AddStringToObject(msg, "type", "proactive_greeting_request");
+    cJSON_AddStringToObject(msg, "text", text.c_str());
+    char* json_str = cJSON_PrintUnformatted(msg);
+    SendText(json_str);
+    free(json_str);
+    cJSON_Delete(msg);
+}
+
+void Protocol::SendVisualContext(const std::string& description) {
+    cJSON* msg = cJSON_CreateObject();
+    cJSON_AddStringToObject(msg, "session_id", session_id_.c_str());
+    cJSON_AddStringToObject(msg, "type", "visual_context");
+    cJSON_AddStringToObject(msg, "description", description.c_str());
+    char* json_str = cJSON_PrintUnformatted(msg);
+    SendText(json_str);
+    free(json_str);
+    cJSON_Delete(msg);
+}
+
+void Protocol::SendVisualContextStructured(const std::string& summary, const std::string& person_emotion,
+                                           const std::string& person_state, const std::string& environment) {
+    cJSON* msg = cJSON_CreateObject();
+    cJSON_AddStringToObject(msg, "session_id", session_id_.c_str());
+    cJSON_AddStringToObject(msg, "type", "visual_context");
+    cJSON_AddStringToObject(msg, "summary", summary.c_str());
+    cJSON_AddStringToObject(msg, "person_emotion", person_emotion.c_str());
+    cJSON_AddStringToObject(msg, "person_state", person_state.c_str());
+    cJSON_AddStringToObject(msg, "environment", environment.c_str());
+    char* json_str = cJSON_PrintUnformatted(msg);
+    SendText(json_str);
+    free(json_str);
+    cJSON_Delete(msg);
+}
+
 bool Protocol::IsTimeout() const {
-    const int kTimeoutSeconds = 120;
-    auto now = std::chrono::steady_clock::now();
-    auto duration = std::chrono::duration_cast<std::chrono::seconds>(now - last_incoming_time_);
-    bool timeout = duration.count() > kTimeoutSeconds;
+    const int64_t kTimeoutMs = 120LL * 1000;
+    if (last_incoming_time_ms_ == 0) {
+        return false;
+    }
+
+    int64_t now_ms = esp_timer_get_time() / 1000;
+    int64_t duration_ms = now_ms - static_cast<int64_t>(last_incoming_time_ms_);
+    bool timeout = duration_ms > kTimeoutMs;
     if (timeout) {
-        ESP_LOGE(TAG, "Channel timeout %ld seconds", (long)duration.count());
+        ESP_LOGE(TAG, "Channel timeout %lld ms", static_cast<long long>(duration_ms));
     }
     return timeout;
 }

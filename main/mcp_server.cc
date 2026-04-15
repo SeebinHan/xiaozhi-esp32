@@ -112,11 +112,12 @@ void McpServer::AddCommonTools() {
                 // Lower the priority to do the camera capture
                 TaskPriorityReset priority_reset(1);
 
-                if (!camera->Capture()) {
+                auto question = properties["question"].value<std::string>();
+                auto result = camera->CaptureAndExplain(question);
+                if (result.empty()) {
                     throw std::runtime_error("Failed to capture photo");
                 }
-                auto question = properties["question"].value<std::string>();
-                return camera->Explain(question);
+                return result;
             });
     }
 #endif
@@ -336,15 +337,20 @@ void McpServer::ParseCapabilities(const cJSON* capabilities) {
     if (cJSON_IsObject(vision)) {
         auto url = cJSON_GetObjectItem(vision, "url");
         auto token = cJSON_GetObjectItem(vision, "token");
+        auto session_id = cJSON_GetObjectItem(vision, "session_id");
         if (cJSON_IsString(url)) {
             auto camera = Board::GetInstance().GetCamera();
             if (camera) {
                 std::string url_str = std::string(url->valuestring);
                 std::string token_str;
+                std::string session_id_str;
                 if (cJSON_IsString(token)) {
                     token_str = std::string(token->valuestring);
                 }
-                camera->SetExplainUrl(url_str, token_str);
+                if (cJSON_IsString(session_id)) {
+                    session_id_str = std::string(session_id->valuestring);
+                }
+                camera->SetExplainUrl(url_str, token_str, session_id_str);
             }
         }
     }

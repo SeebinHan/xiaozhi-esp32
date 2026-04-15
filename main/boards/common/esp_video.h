@@ -38,13 +38,15 @@ private:
     std::vector<MmapBuffer> mmap_buffers_;
     std::string explain_url_;
     std::string explain_token_;
+    std::string explain_session_id_;
     std::thread encoder_thread_;
 
 public:
     EspVideo(const esp_video_init_config_t& config);
     ~EspVideo();
 
-    virtual void SetExplainUrl(const std::string& url, const std::string& token);
+    virtual void SetExplainUrl(const std::string& url, const std::string& token,
+                               const std::string& session_id) override;
     virtual bool Capture();
     // 翻转控制函数
     virtual bool SetHMirror(bool enabled) override;

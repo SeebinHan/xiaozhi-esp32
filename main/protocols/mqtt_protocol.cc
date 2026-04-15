@@ -128,7 +128,7 @@ bool MqttProtocol::StartMqttClient(bool report_error) {
             on_incoming_json_(root);
         }
         cJSON_Delete(root);
-        last_incoming_time_ = std::chrono::steady_clock::now();
+        last_incoming_time_ms_ = esp_timer_get_time() / 1000;
     });
 
     ESP_LOGI(TAG, "Connecting to endpoint %s", endpoint.c_str());
@@ -283,7 +283,7 @@ bool MqttProtocol::OpenAudioChannel() {
             on_incoming_audio_(std::move(packet));
         }
         remote_sequence_ = sequence;
-        last_incoming_time_ = std::chrono::steady_clock::now();
+        last_incoming_time_ms_ = esp_timer_get_time() / 1000;
     });
 
     udp_->Connect(udp_server_, udp_port_);

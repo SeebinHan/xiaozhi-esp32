@@ -37,6 +37,8 @@ set(SOURCES "audio/audio_codec.cc"
             "device_state_machine.cc"
             "assets.cc"
             "main.cc"
+            "companion/presence_coordinator.cc"
+            "boards/topsky-robot/presence_sensor.cc"
             )
 
 set(INCLUDE_DIRS "." "display" "display/lvgl_display" "display/lvgl_display/jpg" "audio" "audio/demuxer" "protocols")
@@ -228,6 +230,8 @@ elseif(CONFIG_BOARD_TYPE_XMINI_C3_4G)
     set(BOARD_TYPE "xmini-c3-4g")
     set(BUILTIN_TEXT_FONT font_puhui_basic_14_1)
     set(BUILTIN_ICON_FONT font_awesome_14_1)
+elseif(CONFIG_BOARD_TYPE_TOPSKY_ROBOT)
+    set(BOARD_TYPE "topsky-robot")
 elseif(CONFIG_BOARD_TYPE_XMINI_C3)
     set(BOARD_TYPE "xmini-c3")
     set(BUILTIN_TEXT_FONT font_puhui_basic_14_1)

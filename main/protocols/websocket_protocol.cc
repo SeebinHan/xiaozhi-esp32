@@ -162,7 +162,7 @@ bool WebsocketProtocol::OpenAudioChannel() {
             }
             cJSON_Delete(root);
         }
-        last_incoming_time_ = std::chrono::steady_clock::now();
+        last_incoming_time_ms_ = esp_timer_get_time() / 1000;
     });
 
     websocket_->OnDisconnected([this]() {

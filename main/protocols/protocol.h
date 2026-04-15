@@ -2,10 +2,11 @@
 #define PROTOCOL_H
 
 #include <cJSON.h>
+#include <cstdint>
 #include <string>
 #include <functional>
-#include <chrono>
 #include <vector>
+#include <memory>
 
 struct AudioStreamPacket {
     int sample_rate = 0;
@@ -73,6 +74,10 @@ public:
     virtual void SendStopListening();
     virtual void SendAbortSpeaking(AbortReason reason);
     virtual void SendMcpMessage(const std::string& message);
+    virtual void SendVisualContext(const std::string& description);
+    virtual void SendVisualContextStructured(const std::string& summary, const std::string& person_emotion,
+                                             const std::string& person_state, const std::string& environment);
+    virtual void SendProactiveGreetingRequest(const std::string& text);
 
 protected:
     std::function<void(const cJSON* root)> on_incoming_json_;
@@ -87,7 +92,7 @@ protected:
     int server_frame_duration_ = 60;
     bool error_occurred_ = false;
     std::string session_id_;
-    std::chrono::time_point<std::chrono::steady_clock> last_incoming_time_;
+    uint64_t last_incoming_time_ms_ = 0;
 
     virtual bool SendText(const std::string& text) = 0;
     virtual void SetError(const std::string& message);
