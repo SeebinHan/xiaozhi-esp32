@@ -13,6 +13,7 @@
 #include "backlight.h"
 #include "camera.h"
 #include "assets.h"
+#include "companion/touch_coordinator.h"
 
 /**
  * Network events for unified callback
@@ -82,7 +83,7 @@ public:
     virtual void SetPowerSaveLevel(PowerSaveLevel level) = 0;
     virtual std::string GetBoardJson() = 0;
     virtual std::string GetDeviceStatusJson() = 0;
-    virtual void ExecuteTouchAction(int level, int raw) { (void)level; (void)raw; }
+    virtual void ExecuteTouchAction(const TouchAction& action) { (void)action; }
 };
 
 #define DECLARE_BOARD(BOARD_CLASS_NAME) \

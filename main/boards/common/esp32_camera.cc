@@ -181,6 +181,16 @@ std::string Esp32Camera::Explain(const std::string &question) {
         return "";
     }
 
+    explain_in_progress_.store(true);
+
+    auto finish_explain = [this](bool release_frame) {
+        if (release_frame && current_fb_ != nullptr) {
+            esp_camera_fb_return(current_fb_);
+            current_fb_ = nullptr;
+        }
+        explain_in_progress_.store(false);
+    };
+
     int64_t encode_start = esp_timer_get_time();
     uint16_t w = current_fb_->width;
     uint16_t h = current_fb_->height;
@@ -194,6 +204,7 @@ std::string Esp32Camera::Explain(const std::string &question) {
         case PIXFORMAT_RGB888:    enc_fmt = V4L2_PIX_FMT_RGB24; break;
         default:
             ESP_LOGE(TAG, "Unsupported pixel format: %d", current_fb_->format);
+            finish_explain(false);
             return "";
     }
 
@@ -223,6 +234,7 @@ std::string Esp32Camera::Explain(const std::string &question) {
 
     if (!encode_ok || jpeg_data.empty()) {
         ESP_LOGE(TAG, "JPEG encoder failed or produced empty output");
+        finish_explain(false);
         return "";
     }
 
@@ -254,16 +266,17 @@ std::string Esp32Camera::Explain(const std::string &question) {
 
     http->SetHeader("Content-Type", "multipart/form-data; boundary=" + boundary);
     http->SetHeader("Content-Length", std::to_string(body.size()));
+    http->SetContent(std::move(body));
     if (!http->Open("POST", explain_url_)) {
         ESP_LOGE(TAG, "Failed to connect to explain URL");
+        finish_explain(false);
         return "";
     }
-
-    http->Write(body.data(), body.size());
 
     if (http->GetStatusCode() != 200) {
         ESP_LOGE(TAG, "Failed to upload photo, status code: %d", http->GetStatusCode());
         http->Close();
+        finish_explain(false);
         return "";
     }
 
@@ -275,7 +288,6 @@ std::string Esp32Camera::Explain(const std::string &question) {
              current_fb_->width, current_fb_->height, static_cast<int>(jpeg_data.size()),
              static_cast<int>(remain_stack_size), question.c_str(), result.c_str());
 
-    esp_camera_fb_return(current_fb_);
-    current_fb_ = nullptr;
+    finish_explain(true);
     return result;
 }

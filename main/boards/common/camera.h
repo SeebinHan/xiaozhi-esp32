@@ -20,6 +20,7 @@ public:
     }
     virtual bool HasExplainUrl() const { return false; }
     virtual bool IsAvailable() const { return false; }
+    virtual bool IsExplainInProgress() const { return false; }
 };
 
 #endif // CAMERA_H

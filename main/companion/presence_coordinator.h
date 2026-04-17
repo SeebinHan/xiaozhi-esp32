@@ -24,6 +24,7 @@ public:
     virtual std::string CapturePresenceGreetingDecision() = 0;
     virtual void SendPresenceGreetingText(const std::string& text) = 0;
     virtual void SchedulePresence(std::function<void()>&& callback) = 0;
+    virtual bool IsHeavyLoadCooldownActiveForPresence() const = 0;
 };
 
 class PresenceCoordinator {

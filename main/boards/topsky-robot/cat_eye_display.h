@@ -48,6 +48,12 @@ private:
         kMinimal,
     };
 
+    enum class IdleAnchorFrame {
+        kNeutral = 0,
+        kLookLeft,
+        kLookRight,
+    };
+
     spi_device_handle_t spi_left_ = nullptr;
     spi_device_handle_t spi_right_ = nullptr;
     SemaphoreHandle_t render_mtx_ = nullptr;
@@ -58,6 +64,7 @@ private:
     size_t active_frame_index_ = 0;
     int pending_delay_ms_ = 0;
     bool sequence_started_ = false;
+    IdleAnchorFrame idle_anchor_frame_ = IdleAnchorFrame::kNeutral;
 
     void LcdCmd(spi_device_handle_t spi, uint8_t cmd);
     void LcdData(spi_device_handle_t spi, const uint8_t* data, int len);
@@ -70,6 +77,7 @@ private:
     void PlayIdleSequence();
     AnimationBudget GetAnimationBudget() const;
     const AnimationSequence* PickSequenceForBudget(AnimationBudget budget) const;
+    const char* PickMinimalFrame(AnimationBudget budget) const;
     void ResetActiveSequence();
     static void BlinkTaskEntry(void* arg);
 };

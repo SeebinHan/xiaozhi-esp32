@@ -12,6 +12,7 @@
 #include <mutex>
 #include <deque>
 #include <memory>
+#include <atomic>
 
 #include "protocol.h"
 #include "ota.h"
@@ -40,6 +41,12 @@ enum AecMode {
     kAecOff,
     kAecOnDeviceSide,
     kAecOnServerSide,
+};
+
+enum class RuntimeLoadLevel {
+    kNormal = 0,
+    kLight,
+    kHeavy,
 };
 
 class Application : public PresenceCoordinatorHost, public TouchCoordinatorHost {
@@ -76,6 +83,10 @@ public:
     void PlaySound(const std::string_view& sound);
     AudioService& GetAudioService() { return audio_service_; }
     void ResetProtocol();
+    void EnterHeavyLoad();
+    void ExitHeavyLoad();
+    RuntimeLoadLevel GetRuntimeLoadLevel() const;
+    bool IsHeavyLoadCooldownActive() const;
 
     DeviceState GetPresenceDeviceState() const override;
     bool IsPresenceAudioIdle() const override;
@@ -90,6 +101,7 @@ public:
     std::string CapturePresenceGreetingDecision() override;
     void SendPresenceGreetingText(const std::string& text) override;
     void SchedulePresence(std::function<void()>&& callback) override;
+    bool IsHeavyLoadCooldownActiveForPresence() const override;
 
     DeviceState GetTouchDeviceState() const override;
     bool IsTouchAudioIdle() const override;
@@ -97,6 +109,8 @@ public:
     bool IsTouchPlaybackDrained() const override;
     bool IsTouchAudioBackpressured() const override;
     bool IsTouchExecutorReady() const override;
+    bool IsTouchHeavyLoadActive() const override;
+    bool IsTouchHeavyLoadCooldownActive() const override;
     void DispatchTouchAction(const TouchAction& action) override;
     void ScheduleTouch(std::function<void()>&& callback) override;
 
@@ -124,6 +138,8 @@ private:
     bool play_popup_on_listening_ = false;
     int clock_ticks_ = 0;
     TaskHandle_t activation_task_handle_ = nullptr;
+    std::atomic<int> heavy_load_count_{0};
+    std::atomic<int64_t> last_heavy_load_end_us_{0};
 
     void HandleStateChangedEvent();
     void HandleToggleChatEvent();
@@ -144,6 +160,8 @@ private:
     void SetListeningMode(ListeningMode mode);
     ListeningMode GetDefaultListeningMode() const;
     void OnStateChanged(DeviceState old_state, DeviceState new_state);
+
+    static constexpr int64_t kHeavyLoadCooldownUs = 8LL * 1000 * 1000;
 };
 
 class TaskPriorityReset {

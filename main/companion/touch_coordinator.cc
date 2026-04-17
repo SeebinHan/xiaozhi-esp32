@@ -1,5 +1,7 @@
 #include "companion/touch_coordinator.h"
 
+#include <cstring>
+
 #include <esp_log.h>
 #include <esp_timer.h>
 
@@ -12,10 +14,13 @@ bool TouchCoordinator::CanStartTouchAction(const char*& reason) const {
         reason = "executor_not_ready";
         return false;
     }
-    if (host_.GetTouchDeviceState() != kDeviceStateIdle) {
+
+    DeviceState state = host_.GetTouchDeviceState();
+    if (state != kDeviceStateIdle) {
         reason = "state_not_idle";
         return false;
     }
+
     if (!host_.IsTouchAudioIdle()) {
         reason = "audio_not_idle";
         return false;
@@ -41,8 +46,23 @@ bool TouchCoordinator::CanStartTouchAction(const char*& reason) const {
         reason = "cooldown_active";
         return false;
     }
+
     reason = "allowed";
     return true;
+}
+
+TouchAction TouchCoordinator::BuildTouchAction(const TouchEvent& event) const {
+    TouchAction action{};
+    action.level = event.level;
+    action.raw = event.raw;
+
+    bool heavy = host_.IsTouchHeavyLoadActive() || host_.IsTouchHeavyLoadCooldownActive();
+    action.allow_sound = true;
+    action.compact_motion = heavy;
+    action.motion = (event.level == TouchLevel::kLight || heavy)
+        ? TouchMotionMode::kTailOnly
+        : TouchMotionMode::kHeadAndTail;
+    return action;
 }
 
 void TouchCoordinator::MaybeLogSkippedEvent(const TouchEvent& event, const char* reason) {
@@ -81,11 +101,10 @@ void TouchCoordinator::SubmitTouchEvent(const TouchEvent& event) {
     ESP_LOGI(TAG, "Touch event accepted: level=%d raw=%d", static_cast<int>(event.level), event.raw);
 
     host_.ScheduleTouch([this, event]() {
-        TouchAction action{};
-        action.level = event.level;
-        action.raw = event.raw;
-        ESP_LOGI(TAG, "Touch action dispatched: level=%d raw=%d",
-                 static_cast<int>(action.level), action.raw);
+        TouchAction action = BuildTouchAction(event);
+        ESP_LOGI(TAG, "Touch action dispatched: level=%d raw=%d motion=%d sound=%d compact=%d",
+                 static_cast<int>(action.level), action.raw, static_cast<int>(action.motion),
+                 action.allow_sound, action.compact_motion);
         host_.DispatchTouchAction(action);
         ResetTouchState();
     });

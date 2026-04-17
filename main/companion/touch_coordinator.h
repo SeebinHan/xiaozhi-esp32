@@ -13,6 +13,12 @@ enum class TouchLevel {
     kHard,
 };
 
+enum class TouchMotionMode {
+    kNone = 0,
+    kTailOnly,
+    kHeadAndTail,
+};
+
 struct TouchEvent {
     TouchLevel level = TouchLevel::kNone;
     int raw = 0;
@@ -21,6 +27,9 @@ struct TouchEvent {
 struct TouchAction {
     TouchLevel level = TouchLevel::kNone;
     int raw = 0;
+    TouchMotionMode motion = TouchMotionMode::kNone;
+    bool allow_sound = false;
+    bool compact_motion = false;
 };
 
 class TouchCoordinatorHost {
@@ -33,6 +42,8 @@ public:
     virtual bool IsTouchPlaybackDrained() const = 0;
     virtual bool IsTouchAudioBackpressured() const = 0;
     virtual bool IsTouchExecutorReady() const = 0;
+    virtual bool IsTouchHeavyLoadActive() const = 0;
+    virtual bool IsTouchHeavyLoadCooldownActive() const = 0;
     virtual void DispatchTouchAction(const TouchAction& action) = 0;
     virtual void ScheduleTouch(std::function<void()>&& callback) = 0;
 };
@@ -45,6 +56,7 @@ public:
 
 private:
     bool CanStartTouchAction(const char*& reason) const;
+    TouchAction BuildTouchAction(const TouchEvent& event) const;
     void MaybeLogSkippedEvent(const TouchEvent& event, const char* reason);
     void ResetTouchState();
 

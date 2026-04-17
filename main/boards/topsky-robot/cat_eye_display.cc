@@ -24,6 +24,10 @@ static const char* const kListeningSequenceNames[] = {
     "look_left_pupil",
     "look_right_pupil",
 };
+
+static const char* const kNeutralFrame = "blink_natural_00.rgb565";
+static const char* const kLookLeftFrame = "look_left_pupil_03.rgb565";
+static const char* const kLookRightFrame = "look_right_pupil_03.rgb565";
 }
 
 CatEyeDisplay::CatEyeDisplay() {
@@ -197,45 +201,48 @@ bool CatEyeDisplay::ShowAssetFrameOnBothEyes(const char* frame_name) {
 }
 
 CatEyeDisplay::AnimationBudget CatEyeDisplay::GetAnimationBudget() const {
-    auto state = Application::GetInstance().GetDeviceState();
-    switch (state) {
-        case kDeviceStateIdle:
-            return AnimationBudget::kFull;
-        case kDeviceStateListening:
-        case kDeviceStateSpeaking:
-            return AnimationBudget::kLight;
-        default:
-            return AnimationBudget::kMinimal;
+    const auto& app = Application::GetInstance();
+    auto load = app.GetRuntimeLoadLevel();
+    if (load == RuntimeLoadLevel::kHeavy || app.IsHeavyLoadCooldownActive()) {
+        return AnimationBudget::kMinimal;
     }
+    if (load == RuntimeLoadLevel::kLight) {
+        return AnimationBudget::kLight;
+    }
+    return AnimationBudget::kFull;
 }
 
 const AnimationSequence* CatEyeDisplay::PickSequenceForBudget(AnimationBudget budget) const {
     auto state = Application::GetInstance().GetDeviceState();
 
-    if (!current_emotion_.empty() && current_emotion_ != "neutral" && state == kDeviceStateIdle) {
+    if (!current_emotion_.empty() && current_emotion_ != "neutral" && state == kDeviceStateIdle && budget == AnimationBudget::kFull) {
         if (const auto* mapped = FindAnimationSequence(current_emotion_)) {
             return mapped;
         }
     }
 
+    if (budget == AnimationBudget::kMinimal) {
+        return FindAnimationSequence("blink_natural");
+    }
+
     if (state == kDeviceStateSpeaking) {
-        int pick = rand() % 100;
-        if (pick < 70) {
-            return FindAnimationSequence("blink_natural");
-        }
-        return FindAnimationSequence("look_up_down_pupil");
+        return FindAnimationSequence("blink_natural");
     }
 
     if (state == kDeviceStateListening) {
         int pick = rand() % 100;
-        if (pick < 50) {
+        if (pick < 78) {
             return FindAnimationSequence("blink_natural");
         }
         return FindAnimationSequence(kListeningSequenceNames[1 + (rand() % 2)]);
     }
 
-    if (budget == AnimationBudget::kMinimal) {
-        return FindAnimationSequence("blink_natural");
+    if (budget == AnimationBudget::kLight) {
+        int pick = rand() % 100;
+        if (pick < 75) {
+            return FindAnimationSequence("blink_natural");
+        }
+        return FindAnimationSequence("look_up_down_pupil");
     }
 
     int pick = rand() % 100;
@@ -243,6 +250,21 @@ const AnimationSequence* CatEyeDisplay::PickSequenceForBudget(AnimationBudget bu
         return FindAnimationSequence("blink_natural");
     }
     return FindAnimationSequence(kFullSequenceNames[1 + (rand() % 3)]);
+}
+
+const char* CatEyeDisplay::PickMinimalFrame(AnimationBudget budget) const {
+    if (budget == AnimationBudget::kMinimal) {
+        return kNeutralFrame;
+    }
+
+    switch (idle_anchor_frame_) {
+        case IdleAnchorFrame::kLookLeft:
+            return kLookLeftFrame;
+        case IdleAnchorFrame::kLookRight:
+            return kLookRightFrame;
+        default:
+            return kNeutralFrame;
+    }
 }
 
 void CatEyeDisplay::ResetActiveSequence() {
@@ -320,11 +342,35 @@ bool CatEyeDisplay::ShowSequenceStep() {
 void CatEyeDisplay::PlayIdleSequence() {
     AnimationBudget budget = GetAnimationBudget();
 
+    if (budget == AnimationBudget::kMinimal) {
+        ResetActiveSequence();
+        if ((rand() % 100) < 22) {
+            active_sequence_ = FindAnimationSequence("blink_natural");
+            active_frame_index_ = 0;
+            sequence_started_ = false;
+            ShowSequenceStep();
+        } else {
+            ShowAssetFrameOnBothEyes(PickMinimalFrame(budget));
+            pending_delay_ms_ = 2200 + (rand() % 1800);
+        }
+        return;
+    }
+
     if (active_sequence_ == nullptr) {
         active_sequence_ = PickSequenceForBudget(budget);
         active_frame_index_ = 0;
         pending_delay_ms_ = 0;
         sequence_started_ = false;
+    }
+
+    if (active_sequence_ != nullptr && active_sequence_->name != nullptr) {
+        if (strcmp(active_sequence_->name, "look_left_pupil") == 0) {
+            idle_anchor_frame_ = IdleAnchorFrame::kLookLeft;
+        } else if (strcmp(active_sequence_->name, "look_right_pupil") == 0) {
+            idle_anchor_frame_ = IdleAnchorFrame::kLookRight;
+        } else if (strcmp(active_sequence_->name, "blink_natural") == 0) {
+            idle_anchor_frame_ = IdleAnchorFrame::kNeutral;
+        }
     }
 
     ShowSequenceStep();
@@ -333,23 +379,45 @@ void CatEyeDisplay::PlayIdleSequence() {
 void CatEyeDisplay::BlinkTaskEntry(void* arg) {
     auto* self = static_cast<CatEyeDisplay*>(arg);
     vTaskDelay(pdMS_TO_TICKS(2000));
-    self->ShowAssetFrameOnBothEyes("blink_natural_00.rgb565");
+    self->ShowAssetFrameOnBothEyes(kNeutralFrame);
 
     while (true) {
         int delay_ms = self->pending_delay_ms_;
         if (delay_ms <= 0) {
-            switch (Application::GetInstance().GetDeviceState()) {
-                case kDeviceStateSpeaking:
-                    delay_ms = 1200 + (rand() % 1200);
+            AnimationBudget budget = self->GetAnimationBudget();
+            switch (budget) {
+                case AnimationBudget::kMinimal:
+                    delay_ms = 2400 + (rand() % 2200);
                     break;
-                case kDeviceStateListening:
-                    delay_ms = 1600 + (rand() % 1600);
+                case AnimationBudget::kLight:
+                    switch (Application::GetInstance().GetDeviceState()) {
+                        case kDeviceStateSpeaking:
+                            delay_ms = 1800 + (rand() % 1800);
+                            break;
+                        case kDeviceStateListening:
+                            delay_ms = 2000 + (rand() % 1800);
+                            break;
+                        default:
+                            delay_ms = 1900 + (rand() % 1700);
+                            break;
+                    }
                     break;
-                case kDeviceStateIdle:
-                    delay_ms = 2500 + (rand() % 2500);
-                    break;
+                case AnimationBudget::kFull:
                 default:
-                    delay_ms = 3200 + (rand() % 2400);
+                    switch (Application::GetInstance().GetDeviceState()) {
+                        case kDeviceStateSpeaking:
+                            delay_ms = 1400 + (rand() % 1200);
+                            break;
+                        case kDeviceStateListening:
+                            delay_ms = 1700 + (rand() % 1500);
+                            break;
+                        case kDeviceStateIdle:
+                            delay_ms = 2500 + (rand() % 2500);
+                            break;
+                        default:
+                            delay_ms = 3200 + (rand() % 2400);
+                            break;
+                    }
                     break;
             }
         }

@@ -23,6 +23,10 @@ bool PresenceCoordinator::CanStartGreeting(const char*& reason) const {
         reason = "transport_not_ready";
         return false;
     }
+    if (host_.IsHeavyLoadCooldownActiveForPresence()) {
+        reason = "heavy_load_cooldown";
+        return false;
+    }
     if (host_.GetPresenceDeviceState() != kDeviceStateIdle) {
         reason = "state_not_idle";
         return false;

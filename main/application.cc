@@ -1127,6 +1127,58 @@ void Application::PlaySound(const std::string_view& sound) {
     audio_service_.PlaySound(sound);
 }
 
+void Application::EnterHeavyLoad() {
+    int previous = heavy_load_count_.fetch_add(1);
+    if (previous <= 0) {
+        heavy_load_count_.store(1);
+        ESP_LOGI(TAG, "Runtime load enter heavy");
+    }
+}
+
+void Application::ExitHeavyLoad() {
+    int previous = heavy_load_count_.load();
+    while (previous > 0) {
+        if (heavy_load_count_.compare_exchange_weak(previous, previous - 1)) {
+            if (previous == 1) {
+                int64_t now = esp_timer_get_time();
+                last_heavy_load_end_us_.store(now);
+                ESP_LOGI(TAG, "Runtime load exit heavy, cooldown started");
+            }
+            return;
+        }
+    }
+
+    heavy_load_count_.store(0);
+}
+
+RuntimeLoadLevel Application::GetRuntimeLoadLevel() const {
+    if (heavy_load_count_.load() > 0) {
+        return RuntimeLoadLevel::kHeavy;
+    }
+
+    auto* camera = Board::GetInstance().GetCamera();
+    if (camera != nullptr && camera->IsExplainInProgress()) {
+        return RuntimeLoadLevel::kHeavy;
+    }
+
+    switch (GetDeviceState()) {
+        case kDeviceStateListening:
+        case kDeviceStateSpeaking:
+        case kDeviceStateConnecting:
+            return RuntimeLoadLevel::kLight;
+        default:
+            return RuntimeLoadLevel::kNormal;
+    }
+}
+
+bool Application::IsHeavyLoadCooldownActive() const {
+    int64_t last_end = last_heavy_load_end_us_.load();
+    if (last_end == 0) {
+        return false;
+    }
+    return (esp_timer_get_time() - last_end) < kHeavyLoadCooldownUs;
+}
+
 void Application::ResetProtocol() {
     Schedule([this]() {
         // Close audio channel if opened
@@ -1190,9 +1242,13 @@ std::string Application::CapturePresenceGreetingDecision() {
     if (camera == nullptr) {
         return {};
     }
-    return camera->CaptureAndExplainToEndpoint(
+
+    EnterHeavyLoad();
+    std::string result = camera->CaptureAndExplainToEndpoint(
         "/mcp/vision/proactive-greeting",
         "观察画面中是否有人，判断是否适合打招呼");
+    ExitHeavyLoad();
+    return result;
 }
 
 void Application::SendPresenceGreetingText(const std::string& text) {
@@ -1204,6 +1260,10 @@ void Application::SendPresenceGreetingText(const std::string& text) {
 
 void Application::SchedulePresence(std::function<void()>&& callback) {
     Schedule(std::move(callback));
+}
+
+bool Application::IsHeavyLoadCooldownActiveForPresence() const {
+    return heavy_load_count_.load() > 0 || IsHeavyLoadCooldownActive();
 }
 
 DeviceState Application::GetTouchDeviceState() const {
@@ -1230,10 +1290,19 @@ bool Application::IsTouchExecutorReady() const {
     return true;
 }
 
+bool Application::IsTouchHeavyLoadActive() const {
+    return heavy_load_count_.load() > 0;
+}
+
+bool Application::IsTouchHeavyLoadCooldownActive() const {
+    return IsHeavyLoadCooldownActive();
+}
+
 void Application::DispatchTouchAction(const TouchAction& action) {
-    ESP_LOGI(TAG, "Touch action execute: level=%d raw=%d",
-             static_cast<int>(action.level), action.raw);
-    Board::GetInstance().ExecuteTouchAction(static_cast<int>(action.level), action.raw);
+    ESP_LOGI(TAG, "Touch action execute: level=%d raw=%d motion=%d sound=%d compact=%d",
+             static_cast<int>(action.level), action.raw, static_cast<int>(action.motion),
+             action.allow_sound, action.compact_motion);
+    Board::GetInstance().ExecuteTouchAction(action);
 }
 
 void Application::ScheduleTouch(std::function<void()>&& callback) {

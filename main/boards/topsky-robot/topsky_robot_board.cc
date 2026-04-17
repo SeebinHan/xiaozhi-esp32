@@ -2,7 +2,7 @@
 #include "audio/codecs/no_audio_codec.h"
 #include "config.h"
 #include "display/display.h"
-#include "esp32_camera.h"
+#include "boards/common/esp32_camera.h"
 #include "led/single_led.h"
 #include "presence_sensor.h"
 #include "touch_sensor.h"
@@ -18,6 +18,7 @@
 #include <driver/i2c_master.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
+#include <freertos/queue.h>
 
 #define TAG "TopskyRobotBoard"
 
@@ -27,6 +28,8 @@ constexpr uint32_t kPresenceRearmDelayMs = 75000;
 constexpr TickType_t kTouchPollInterval = pdMS_TO_TICKS(20);
 constexpr int kTouchStableThreshold = 3;
 constexpr int kMotionTickMs = 20;
+constexpr UBaseType_t kTouchActionWorkerPriority = 1;
+constexpr size_t kTouchActionQueueLength = 1;
 
 struct ServoPose {
     int head_pan;
@@ -120,16 +123,20 @@ static void RunMotionSegment(HeadGimbal* head, TailServo* tail, const ServoPose&
     }
 }
 
-static void PlayTouchSfx(int level) {
+static void PlayTouchSfx(const TouchAction& action) {
+    if (!action.allow_sound) {
+        return;
+    }
+
     auto& app = Application::GetInstance();
     auto state = app.GetDeviceState();
     if (!(state == kDeviceStateIdle || state == kDeviceStateStarting)) {
         return;
     }
 
-    if (level == static_cast<int>(TouchLevel::kLight)) {
+    if (action.level == TouchLevel::kLight) {
         app.PlaySound(Lang::Sounds::OGG_MEOW_SOFT);
-    } else if (level == static_cast<int>(TouchLevel::kMedium)) {
+    } else if (action.level == TouchLevel::kMedium) {
         app.PlaySound(Lang::Sounds::OGG_MEOW_CUTE);
     } else {
         app.PlaySound(Lang::Sounds::OGG_MEOW_LOUD);
@@ -195,12 +202,61 @@ void TouchPollTask(void* arg) {
 
 class TopskyRobotBoard : public DualNetworkBoard {
 private:
-    Esp32Camera* camera_ = nullptr;
+    Camera* camera_ = nullptr;
     CatEyeDisplay display_;
     i2c_master_bus_handle_t servo_i2c_bus_ = nullptr;
     Pca9685* servo_driver_ = nullptr;
     HeadGimbal* head_gimbal_ = nullptr;
     TailServo* tail_servo_ = nullptr;
+    QueueHandle_t touch_action_queue_ = nullptr;
+    TaskHandle_t touch_action_task_ = nullptr;
+
+    static void TouchActionWorkerEntry(void* arg) {
+        auto* board = static_cast<TopskyRobotBoard*>(arg);
+        TouchAction action{};
+        while (true) {
+            if (xQueueReceive(board->touch_action_queue_, &action, portMAX_DELAY) != pdTRUE) {
+                continue;
+            }
+            board->RunTouchAction(action);
+        }
+    }
+
+    void RunTouchAction(const TouchAction& action) {
+        ESP_LOGI(TAG, "Run touch servo action: level=%d raw=%d motion=%d sound=%d compact=%d",
+                 static_cast<int>(action.level), action.raw, static_cast<int>(action.motion),
+                 action.allow_sound, action.compact_motion);
+        if (head_gimbal_ == nullptr || tail_servo_ == nullptr || action.motion == TouchMotionMode::kNone) {
+            return;
+        }
+
+        PlayTouchSfx(action);
+        ServoPose base_pose = CapturePose(head_gimbal_, tail_servo_);
+        bool compact = action.compact_motion;
+
+        if (action.motion == TouchMotionMode::kTailOnly) {
+            RunMotionSegment(head_gimbal_, tail_servo_, base_pose, {{0, -4, +16, +8}, 90, 30});
+            RunMotionSegment(head_gimbal_, tail_servo_, base_pose, {{0, -4, -16, +8}, 100, 30});
+            RunMotionSegment(head_gimbal_, tail_servo_, base_pose, {{0, -2, 0, +4}, 110, compact ? 20 : 50});
+        } else if (compact) {
+            RunMotionSegment(head_gimbal_, tail_servo_, base_pose, {{-4, -8, 0, +12}, 100, 40});
+            RunMotionSegment(head_gimbal_, tail_servo_, base_pose, {{+3, -7, +14, +14}, 120, 40});
+            RunMotionSegment(head_gimbal_, tail_servo_, base_pose, {{0, -4, 0, +8}, 140, 60});
+        } else if (action.level == TouchLevel::kMedium) {
+            RunMotionSegment(head_gimbal_, tail_servo_, base_pose, {{-6, -14, 0, +22}, 180, 90});
+            RunMotionSegment(head_gimbal_, tail_servo_, base_pose, {{-4, -16, +36, +28}, 200, 80});
+            RunMotionSegment(head_gimbal_, tail_servo_, base_pose, {{+2, -14, -36, +28}, 230, 80});
+            RunMotionSegment(head_gimbal_, tail_servo_, base_pose, {{-2, -12, +28, +24}, 230, 80});
+            RunMotionSegment(head_gimbal_, tail_servo_, base_pose, {{0, -10, 0, +18}, 260, 140});
+        } else {
+            RunMotionSegment(head_gimbal_, tail_servo_, base_pose, {{-8, -14, 0, +20}, 150, 80});
+            RunMotionSegment(head_gimbal_, tail_servo_, base_pose, {{-4, -12, +18, +22}, 180, 70});
+            RunMotionSegment(head_gimbal_, tail_servo_, base_pose, {{+4, -12, -18, +22}, 190, 70});
+            RunMotionSegment(head_gimbal_, tail_servo_, base_pose, {{0, -8, 0, +12}, 220, 120});
+        }
+
+        ApplyPoseSmooth(head_gimbal_, tail_servo_, kServoZeroPose, compact ? 140 : 220);
+    }
 
     void InitializeServoBus() {
         i2c_master_bus_config_t bus_cfg = {
@@ -235,6 +291,16 @@ private:
         head_gimbal_->SetTilt(kServoZeroPose.head_tilt);
     }
 
+    void InitializeTouchActionWorker() {
+        touch_action_queue_ = xQueueCreate(kTouchActionQueueLength, sizeof(TouchAction));
+        if (touch_action_queue_ == nullptr) {
+            ESP_LOGE(TAG, "Failed to create touch action queue");
+            return;
+        }
+        xTaskCreate(TouchActionWorkerEntry, "touch_action", 4096, this,
+                    kTouchActionWorkerPriority, &touch_action_task_);
+    }
+
     void InitializeCamera() {
         camera_config_t config = {};
         config.ledc_channel = LEDC_CHANNEL_2;
@@ -264,7 +330,7 @@ private:
         config.fb_location = CAMERA_FB_IN_PSRAM;
         config.grab_mode = CAMERA_GRAB_WHEN_EMPTY;
 
-        camera_ = new Esp32Camera(config);
+        camera_ = static_cast<Camera*>(new Esp32Camera(config));
         camera_->SetVFlip(true);
     }
 
@@ -290,6 +356,7 @@ public:
         InitializeServoBus();
         InitializeHeadGimbal();
         InitializeTailServo();
+        InitializeTouchActionWorker();
         InitializeCamera();
         display_.Initialize();
         InitializePresenceSensor();
@@ -325,35 +392,14 @@ public:
         return DualNetworkBoard::GetLed();
     }
 
-    virtual void ExecuteTouchAction(int level, int raw) override {
-        ESP_LOGI(TAG, "Execute touch servo action: level=%d raw=%d", level, raw);
-        if (head_gimbal_ == nullptr || tail_servo_ == nullptr) {
+    virtual void ExecuteTouchAction(const TouchAction& action) override {
+        ESP_LOGI(TAG, "Queue touch servo action: level=%d raw=%d motion=%d sound=%d compact=%d",
+                 static_cast<int>(action.level), action.raw, static_cast<int>(action.motion),
+                 action.allow_sound, action.compact_motion);
+        if (touch_action_queue_ == nullptr || action.motion == TouchMotionMode::kNone) {
             return;
         }
-
-        PlayTouchSfx(level);
-        ServoPose base_pose = CapturePose(head_gimbal_, tail_servo_);
-
-        if (level == static_cast<int>(TouchLevel::kLight)) {
-            RunMotionSegment(head_gimbal_, tail_servo_, base_pose, {{0, -8, 0, +14}, 160, 80});
-            RunMotionSegment(head_gimbal_, tail_servo_, base_pose, {{0, -10, +26, +16}, 180, 70});
-            RunMotionSegment(head_gimbal_, tail_servo_, base_pose, {{0, -10, -26, +16}, 220, 70});
-            RunMotionSegment(head_gimbal_, tail_servo_, base_pose, {{0, -9, +20, +14}, 220, 60});
-            RunMotionSegment(head_gimbal_, tail_servo_, base_pose, {{0, -6, 0, +8}, 240, 120});
-        } else if (level == static_cast<int>(TouchLevel::kMedium)) {
-            RunMotionSegment(head_gimbal_, tail_servo_, base_pose, {{-6, -14, 0, +22}, 180, 90});
-            RunMotionSegment(head_gimbal_, tail_servo_, base_pose, {{-4, -16, +36, +28}, 200, 80});
-            RunMotionSegment(head_gimbal_, tail_servo_, base_pose, {{+2, -14, -36, +28}, 230, 80});
-            RunMotionSegment(head_gimbal_, tail_servo_, base_pose, {{-2, -12, +28, +24}, 230, 80});
-            RunMotionSegment(head_gimbal_, tail_servo_, base_pose, {{0, -10, 0, +18}, 260, 140});
-        } else {
-            RunMotionSegment(head_gimbal_, tail_servo_, base_pose, {{-10, -20, 0, +34}, 160, 100});
-            RunMotionSegment(head_gimbal_, tail_servo_, base_pose, {{-6, -16, +16, +38}, 220, 90});
-            RunMotionSegment(head_gimbal_, tail_servo_, base_pose, {{+4, -10, -14, +30}, 260, 100});
-            RunMotionSegment(head_gimbal_, tail_servo_, base_pose, {{0, -8, 0, +20}, 300, 180});
-        }
-
-        ApplyPoseSmooth(head_gimbal_, tail_servo_, kServoZeroPose, 280);
+        xQueueOverwrite(touch_action_queue_, &action);
     }
 };
 

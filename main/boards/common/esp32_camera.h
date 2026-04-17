@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <cstddef>
 #include <mutex>
 #include <string>
@@ -18,6 +19,7 @@ private:
     camera_fb_t* current_fb_ = nullptr;
     uint8_t* encode_buf_ = nullptr;
     size_t encode_buf_size_ = 0;
+    std::atomic<bool> explain_in_progress_{false};
 
 public:
     explicit Esp32Camera(const camera_config_t& config);
@@ -35,4 +37,5 @@ public:
                                            const std::string& question) override;
     bool HasExplainUrl() const override;
     bool IsAvailable() const override { return streaming_on_; }
+    bool IsExplainInProgress() const override { return explain_in_progress_.load(); }
 };
