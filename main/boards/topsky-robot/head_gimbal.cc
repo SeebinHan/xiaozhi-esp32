@@ -18,13 +18,29 @@ float HeadGimbal::AngleToPulseUs(int angle) const {
 }
 
 void HeadGimbal::SetPan(int angle) {
-    pan_angle_ = angle;
     if (!driver_) return;
-    driver_->SetServoPulse(ch_pan_, AngleToPulseUs(angle));
+    int calibrated = ApplyCalibration(angle, pan_calibration_);
+    if (!NeedsServoWrite(last_written_pan_, calibrated, pan_calibration_.deadband_deg)) {
+        UpdateCachedAngleOnWriteResult(pan_angle_, angle, true);
+        return;
+    }
+    bool write_success = driver_->SetServoPulse(ch_pan_, AngleToPulseUs(calibrated));
+    UpdateCachedAngleOnWriteResult(pan_angle_, angle, write_success);
+    if (write_success) {
+        last_written_pan_ = calibrated;
+    }
 }
 
 void HeadGimbal::SetTilt(int angle) {
-    tilt_angle_ = angle;
     if (!driver_) return;
-    driver_->SetServoPulse(ch_tilt_, AngleToPulseUs(angle));
+    int calibrated = ApplyCalibration(angle, tilt_calibration_);
+    if (!NeedsServoWrite(last_written_tilt_, calibrated, tilt_calibration_.deadband_deg)) {
+        UpdateCachedAngleOnWriteResult(tilt_angle_, angle, true);
+        return;
+    }
+    bool write_success = driver_->SetServoPulse(ch_tilt_, AngleToPulseUs(calibrated));
+    UpdateCachedAngleOnWriteResult(tilt_angle_, angle, write_success);
+    if (write_success) {
+        last_written_tilt_ = calibrated;
+    }
 }

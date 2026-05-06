@@ -77,7 +77,9 @@ public:
     virtual void SendVisualContext(const std::string& description);
     virtual void SendVisualContextStructured(const std::string& summary, const std::string& person_emotion,
                                              const std::string& person_state, const std::string& environment);
-    virtual void SendProactiveGreetingRequest(const std::string& text);
+    virtual void SendProactiveGreetingRequest(const std::string& scene_summary);
+    // 端到端延迟测量：收到本轮 TTS 首个下行音频包时向服务端回报一次
+    virtual void SendClientMetricsFirstAudioPlay();
 
 protected:
     std::function<void(const cJSON* root)> on_incoming_json_;

@@ -43,17 +43,15 @@ void McpServer::AddCommonTools() {
     // Custom tools must be added in the board's InitializeTools function.
 
     AddTool("self.get_device_status",
-        "Provides the real-time information of the device, including the current status of the audio speaker, screen, battery, network, etc.\n"
-        "Use this tool for: \n"
-        "1. Answering questions about current condition (e.g. what is the current volume of the audio speaker?)\n"
-        "2. As the first step to control the device (e.g. turn up / down the volume of the audio speaker, etc.)",
+        "Use this tool whenever you need the device's real current status, such as volume, battery, network, screen state, or other live hardware information.\n"
+        "Do not guess real-time device status.",
         PropertyList(),
         [&board](const PropertyList& properties) -> ReturnValue {
             return board.GetDeviceStatusJson();
         });
 
     AddTool("self.audio_speaker.set_volume",
-        "Set the volume of the audio speaker directly without requiring a prior `self.get_device_status` call.",
+        "Set the volume of the audio speaker directly without requiring a prior `self.get_device_status` call. Use this tool whenever the user asks to set, raise, lower, mute, or otherwise change the device volume to a specific value or clear direction. Execute the volume change directly instead of only promising to do it.",
         PropertyList({
             Property("volume", kPropertyTypeInteger, 0, 100)
         }),
@@ -100,11 +98,11 @@ void McpServer::AddCommonTools() {
     auto camera = board.GetCamera();
     if (camera) {
         AddTool("self.camera.take_photo",
-            "Always remember you have a camera. If the user asks you to see something, use this tool to take a photo and then explain it.\n"
+            "Use this tool whenever the user asks you to look, see, inspect, recognize, or photograph anything in front of the camera. When users ask 看看, 看一下, 这是什么, 你看到什么, or ask any visual question, call this tool first. This is the only reliable way to answer visual questions.\n"
             "Args:\n"
-            "  `question`: The question that you want to ask about the photo.\n"
+            "  `question`: What you want to know from the photo.\n"
             "Return:\n"
-            "  A JSON object that provides the photo information.",
+            "  A JSON object containing the visual result.",
             PropertyList({
                 Property("question", kPropertyTypeString)
             }),

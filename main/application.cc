@@ -500,6 +500,13 @@ void Application::InitializeProtocol() {
     
     protocol_->OnIncomingAudio([this](std::unique_ptr<AudioStreamPacket> packet) {
         if (GetDeviceState() == kDeviceStateSpeaking) {
+            // 用户体验延迟测量：本轮 TTS 收到首个下行音频包时，回传一条 client_metrics，
+            // 服务端据此计算 network_ms 与 true_e2e_ms。仅上报一次。
+            if (!first_audio_reported_.test_and_set(std::memory_order_acq_rel)) {
+                if (protocol_) {
+                    protocol_->SendClientMetricsFirstAudioPlay();
+                }
+            }
             audio_service_.PushPacketToDecodeQueue(std::move(packet));
         }
     });
@@ -533,6 +540,8 @@ void Application::InitializeProtocol() {
         if (strcmp(type->valuestring, "tts") == 0) {
             auto state = cJSON_GetObjectItem(root, "state");
             if (strcmp(state->valuestring, "start") == 0) {
+                // 新一轮 TTS 开始：允许下一次 OnIncomingAudio 上报首字事件
+                first_audio_reported_.clear(std::memory_order_release);
                 Schedule([this]() {
                     aborted_ = false;
                     SetDeviceState(kDeviceStateSpeaking);
@@ -1254,7 +1263,7 @@ std::string Application::CapturePresenceGreetingDecision() {
 void Application::SendPresenceGreetingText(const std::string& text) {
     if (protocol_ != nullptr) {
         protocol_->SendProactiveGreetingRequest(text);
-        ESP_LOGI(TAG, "Sent proactive greeting: %s", text.c_str());
+        ESP_LOGI(TAG, "Sent proactive greeting scene_summary: %s", text.c_str());
     }
 }
 

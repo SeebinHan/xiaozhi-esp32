@@ -45,6 +45,7 @@ set(SOURCES "audio/audio_codec.cc"
             "companion/presence_coordinator.cc"
             "companion/touch_coordinator.cc"
             "boards/topsky-robot/presence_sensor.cc"
+            "boards/topsky-robot/presence_sensor_logic.cc"
             "boards/topsky-robot/touch_sensor.cc"
             )
 
@@ -799,6 +800,7 @@ else()
         ${CMAKE_CURRENT_SOURCE_DIR}/boards/${BOARD_TYPE}/*.c
     )
 endif()
+list(FILTER BOARD_SOURCES EXCLUDE REGEX ".*_host_test\\.(cc|c)$")
 list(APPEND SOURCES ${BOARD_SOURCES})
 
 # Select audio processor according to Kconfig

@@ -1,17 +1,17 @@
 #include "presence_sensor.h"
+#include "presence_sensor_logic.h"
 
 #include <esp_check.h>
 #include <esp_log.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 
-#include <algorithm>
 #include <functional>
 
 #define TAG "PresenceSensor"
 
-static constexpr int kRetriggerIntervalMs = 30000;
 static constexpr uint32_t kPresenceNotifyBit = 0x01;
+static constexpr uint32_t kLeaveResetMs = 3000;
 
 PresenceSensor::PresenceSensor(gpio_num_t gpio) : gpio_(gpio) {}
 
@@ -66,41 +66,28 @@ void IRAM_ATTR PresenceSensor::GpioIsrHandler(void* arg) {
 
 void PresenceSensor::EventTask(void* arg) {
     auto* self = static_cast<PresenceSensor*>(arg);
-    bool last_present = gpio_get_level(self->gpio_) == 1;
-    TickType_t last_trigger_tick = 0;
+    PresenceDetectionState state{};
+    state.last_present = gpio_get_level(self->gpio_) == 1;
 
     while (true) {
         TickType_t now = xTaskGetTickCount();
         TickType_t enabled_tick = self->enabled_tick_.load(std::memory_order_relaxed);
         TickType_t arm_delay_ticks = self->arm_delay_ticks_.load(std::memory_order_relaxed);
         bool enabled = self->enabled_.load(std::memory_order_relaxed);
+        bool present_now = gpio_get_level(self->gpio_) == 1;
 
         TickType_t wait_ticks = portMAX_DELAY;
-        if (enabled && last_present) {
-            bool has_arm_deadline = enabled_tick != 0 && arm_delay_ticks != 0;
-            TickType_t arm_wait_ticks = 0;
-            if (has_arm_deadline) {
-                TickType_t arm_elapsed = now - enabled_tick;
-                arm_wait_ticks = arm_elapsed >= arm_delay_ticks ? 0 : (arm_delay_ticks - arm_elapsed);
-            }
-
-            bool has_retrigger_deadline = last_trigger_tick != 0;
-            TickType_t retrigger_wait_ticks = 0;
-            if (has_retrigger_deadline) {
-                TickType_t retrigger_elapsed = now - last_trigger_tick;
-                TickType_t retrigger_ticks = pdMS_TO_TICKS(kRetriggerIntervalMs);
-                retrigger_wait_ticks = retrigger_elapsed >= retrigger_ticks ? 0 : (retrigger_ticks - retrigger_elapsed);
-            }
-
-            if (has_arm_deadline && has_retrigger_deadline) {
-                wait_ticks = std::max(arm_wait_ticks, retrigger_wait_ticks);
-            } else if (has_arm_deadline) {
-                wait_ticks = arm_wait_ticks;
-            } else if (has_retrigger_deadline) {
-                wait_ticks = retrigger_wait_ticks;
-            } else {
+        if (enabled && present_now && !state.has_triggered_in_current_presence) {
+            if (arm_delay_ticks == 0) {
                 wait_ticks = 0;
+            } else {
+                TickType_t arm_elapsed = now - enabled_tick;
+                wait_ticks = arm_elapsed >= arm_delay_ticks ? 0 : (arm_delay_ticks - arm_elapsed);
             }
+        } else if (!present_now && state.has_triggered_in_current_presence && state.absent_since_tick != 0) {
+            TickType_t leave_reset_ticks = pdMS_TO_TICKS(kLeaveResetMs);
+            TickType_t absent_elapsed = now - state.absent_since_tick;
+            wait_ticks = absent_elapsed >= leave_reset_ticks ? 0 : (leave_reset_ticks - absent_elapsed);
         }
 
         uint32_t notified = 0;
@@ -111,20 +98,19 @@ void PresenceSensor::EventTask(void* arg) {
         enabled_tick = self->enabled_tick_.load(std::memory_order_relaxed);
         arm_delay_ticks = self->arm_delay_ticks_.load(std::memory_order_relaxed);
         enabled = self->enabled_.load(std::memory_order_relaxed);
-        bool arm_delay_elapsed = enabled_tick != 0 && (now - enabled_tick) >= arm_delay_ticks;
-        bool is_edge = present && !last_present;
-        bool retrigger_elapsed = present && last_trigger_tick != 0 &&
-            (now - last_trigger_tick) >= pdMS_TO_TICKS(kRetriggerIntervalMs);
 
-        if (present && enabled && arm_delay_elapsed &&
-            (is_edge || retrigger_elapsed || last_trigger_tick == 0)) {
-            last_trigger_tick = now;
-            ESP_LOGI(TAG, "Presence detected%s", is_edge ? "" : " (retrigger)");
+        if (ShouldTriggerPresenceDetection(
+                state,
+                present,
+                enabled,
+                static_cast<uint32_t>(enabled_tick),
+                static_cast<uint32_t>(arm_delay_ticks),
+                pdMS_TO_TICKS(kLeaveResetMs),
+                static_cast<uint32_t>(now))) {
+            ESP_LOGI(TAG, "Presence detected");
             if (self->on_detected_) {
                 self->on_detected_();
             }
         }
-
-        last_present = present;
     }
 }

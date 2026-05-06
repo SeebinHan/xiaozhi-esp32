@@ -10,11 +10,15 @@
 #include "tail_servo.h"
 #include "pca9685.h"
 #include "cat_eye_display.h"
+#include "mcp_server.h"
 #include "application.h"
 #include "assets/lang_config.h"
+#include "motion_math.h"
 
 #include <algorithm>
+#include <esp_timer.h>
 #include <esp_log.h>
+#include <driver/gpio.h>
 #include <driver/i2c_master.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
@@ -49,20 +53,73 @@ struct MotionSegment {
     ServoOffset offset;
     int move_ms;
     int hold_ms;
+    EaseCurve curve = EaseCurve::kEaseInOutCubic;
+    int head_phase_delay_percent = 0;
+    int tail_phase_delay_percent = 0;
+};
+
+struct AxisTarget {
+    int start;
+    int target;
+};
+
+struct AxisTargets {
+    AxisTarget head_pan;
+    AxisTarget head_tilt;
+    AxisTarget tail_horizontal;
+    AxisTarget tail_vertical;
 };
 
 constexpr ServoPose kServoZeroPose = {
     .head_pan = 50,
     .head_tilt = 85,
-    .tail_horizontal = 5,
+    .tail_horizontal = 35,
     .tail_vertical = 0,
+};
+
+constexpr ServoAxisCalibration kHeadPanCalibration = {
+    .trim_deg = 0,
+    .min_deg = 15,
+    .max_deg = 110,
+    .reversed = false,
+    .deadband_deg = 1,
+};
+
+constexpr ServoAxisCalibration kHeadTiltCalibration = {
+    .trim_deg = 0,
+    .min_deg = 45,
+    .max_deg = 125,
+    .reversed = false,
+    .deadband_deg = 1,
+};
+
+constexpr ServoAxisCalibration kTailHorizontalCalibration = {
+    .trim_deg = 0,
+    .min_deg = 0,
+    .max_deg = 90,
+    .reversed = false,
+    .deadband_deg = 2,
+};
+
+constexpr ServoAxisCalibration kTailVerticalCalibration = {
+    .trim_deg = 0,
+    .min_deg = 0,
+    .max_deg = 60,
+    .reversed = false,
+    .deadband_deg = 1,
 };
 
 PresenceSensor* g_presence_sensor = nullptr;
 TouchSensor* g_touch_sensor = nullptr;
 
 static int ClampAngle(int angle) {
-    return std::clamp(angle, 0, 180);
+    if (angle < 0) {
+        return 0;
+    }
+    if (angle > 180) {
+        return 180;
+    }
+    return angle;
 }
 
 static ServoPose AddOffset(const ServoPose& base, const ServoOffset& offset) {
@@ -87,6 +144,19 @@ static ServoPose CapturePose(HeadGimbal* head, TailServo* tail) {
     return pose;
 }
 
+static AxisTargets BuildAxisTargets(const ServoPose& start, const ServoPose& target) {
+    return {
+        .head_pan = {start.head_pan, target.head_pan},
+        .head_tilt = {start.head_tilt, target.head_tilt},
+        .tail_horizontal = {start.tail_horizontal, target.tail_horizontal},
+        .tail_vertical = {start.tail_vertical, target.tail_vertical},
+    };
+}
+
+static int EvaluateAxis(const AxisTarget& axis, int progress_q10) {
+    return axis.start + ((axis.target - axis.start) * progress_q10) / 1024;
+}
+
 static void ApplyPoseInstant(HeadGimbal* head, TailServo* tail, const ServoPose& pose) {
     if (head) {
         head->SetPan(pose.head_pan);
@@ -98,26 +168,33 @@ static void ApplyPoseInstant(HeadGimbal* head, TailServo* tail, const ServoPose&
     }
 }
 
-static void ApplyPoseSmooth(HeadGimbal* head, TailServo* tail, const ServoPose& target, int duration_ms) {
+static void ApplyPoseSmooth(HeadGimbal* head, TailServo* tail, const ServoPose& target, int duration_ms,
+                            EaseCurve curve = EaseCurve::kEaseInOutCubic,
+                            int head_phase_delay_percent = 0,
+                            int tail_phase_delay_percent = 0) {
     ServoPose start = CapturePose(head, tail);
-    int steps = std::max(1, duration_ms / kMotionTickMs);
-    for (int step = 1; step <= steps; ++step) {
-        auto lerp = [step, steps](int from, int to) {
-            return from + (to - from) * step / steps;
-        };
+    AxisTargets axes = BuildAxisTargets(start, target);
+    int total_ms = std::max(kMotionTickMs, duration_ms);
+    for (int elapsed_ms = 0; elapsed_ms <= total_ms; elapsed_ms += kMotionTickMs) {
+        int clamped_elapsed_ms = std::min(elapsed_ms, total_ms);
+        int head_progress = ApplyEasing(curve, ComputeDelayedProgress(clamped_elapsed_ms, total_ms, head_phase_delay_percent));
+        int tail_progress = ApplyEasing(curve, ComputeDelayedProgress(clamped_elapsed_ms, total_ms, tail_phase_delay_percent));
         ServoPose current = {
-            .head_pan = lerp(start.head_pan, target.head_pan),
-            .head_tilt = lerp(start.head_tilt, target.head_tilt),
-            .tail_horizontal = lerp(start.tail_horizontal, target.tail_horizontal),
-            .tail_vertical = lerp(start.tail_vertical, target.tail_vertical),
+            .head_pan = EvaluateAxis(axes.head_pan, head_progress),
+            .head_tilt = EvaluateAxis(axes.head_tilt, head_progress),
+            .tail_horizontal = EvaluateAxis(axes.tail_horizontal, tail_progress),
+            .tail_vertical = EvaluateAxis(axes.tail_vertical, tail_progress),
         };
         ApplyPoseInstant(head, tail, current);
-        vTaskDelay(pdMS_TO_TICKS(kMotionTickMs));
+        if (clamped_elapsed_ms < total_ms) {
+            vTaskDelay(pdMS_TO_TICKS(kMotionTickMs));
+        }
     }
 }
 
 static void RunMotionSegment(HeadGimbal* head, TailServo* tail, const ServoPose& base, const MotionSegment& segment) {
-    ApplyPoseSmooth(head, tail, AddOffset(base, segment.offset), segment.move_ms);
+    ApplyPoseSmooth(head, tail, AddOffset(base, segment.offset), segment.move_ms, segment.curve,
+                    segment.head_phase_delay_percent, segment.tail_phase_delay_percent);
     if (segment.hold_ms > 0) {
         vTaskDelay(pdMS_TO_TICKS(segment.hold_ms));
     }
@@ -223,10 +300,10 @@ private:
     }
 
     void RunTouchAction(const TouchAction& action) {
-        ESP_LOGI(TAG, "Run touch servo action: level=%d raw=%d motion=%d sound=%d compact=%d",
+        ESP_LOGI(TAG, "Run touch servo action: level=%d raw=%d motion=%d sound=%d compact=%d preset=%d",
                  static_cast<int>(action.level), action.raw, static_cast<int>(action.motion),
-                 action.allow_sound, action.compact_motion);
-        if (head_gimbal_ == nullptr || tail_servo_ == nullptr || action.motion == TouchMotionMode::kNone) {
+                 action.allow_sound, action.compact_motion, static_cast<int>(action.preset));
+        if (head_gimbal_ == nullptr || tail_servo_ == nullptr) {
             return;
         }
 
@@ -234,28 +311,189 @@ private:
         ServoPose base_pose = CapturePose(head_gimbal_, tail_servo_);
         bool compact = action.compact_motion;
 
-        if (action.motion == TouchMotionMode::kTailOnly) {
-            RunMotionSegment(head_gimbal_, tail_servo_, base_pose, {{0, -4, +16, +8}, 90, 30});
-            RunMotionSegment(head_gimbal_, tail_servo_, base_pose, {{0, -4, -16, +8}, 100, 30});
-            RunMotionSegment(head_gimbal_, tail_servo_, base_pose, {{0, -2, 0, +4}, 110, compact ? 20 : 50});
-        } else if (compact) {
-            RunMotionSegment(head_gimbal_, tail_servo_, base_pose, {{-4, -8, 0, +12}, 100, 40});
-            RunMotionSegment(head_gimbal_, tail_servo_, base_pose, {{+3, -7, +14, +14}, 120, 40});
-            RunMotionSegment(head_gimbal_, tail_servo_, base_pose, {{0, -4, 0, +8}, 140, 60});
-        } else if (action.level == TouchLevel::kMedium) {
-            RunMotionSegment(head_gimbal_, tail_servo_, base_pose, {{-6, -14, 0, +22}, 180, 90});
-            RunMotionSegment(head_gimbal_, tail_servo_, base_pose, {{-4, -16, +36, +28}, 200, 80});
-            RunMotionSegment(head_gimbal_, tail_servo_, base_pose, {{+2, -14, -36, +28}, 230, 80});
-            RunMotionSegment(head_gimbal_, tail_servo_, base_pose, {{-2, -12, +28, +24}, 230, 80});
-            RunMotionSegment(head_gimbal_, tail_servo_, base_pose, {{0, -10, 0, +18}, 260, 140});
-        } else {
-            RunMotionSegment(head_gimbal_, tail_servo_, base_pose, {{-8, -14, 0, +20}, 150, 80});
-            RunMotionSegment(head_gimbal_, tail_servo_, base_pose, {{-4, -12, +18, +22}, 180, 70});
-            RunMotionSegment(head_gimbal_, tail_servo_, base_pose, {{+4, -12, -18, +22}, 190, 70});
-            RunMotionSegment(head_gimbal_, tail_servo_, base_pose, {{0, -8, 0, +12}, 220, 120});
+        if (action.preset != TouchMotionPreset::kNone) {
+            RunPresetMotion(action.preset, base_pose);
+            return;
         }
 
-        ApplyPoseSmooth(head_gimbal_, tail_servo_, kServoZeroPose, compact ? 140 : 220);
+        if (action.motion == TouchMotionMode::kNone) {
+            return;
+        }
+
+        if (action.motion == TouchMotionMode::kTailOnly) {
+            RunMotionSegment(head_gimbal_, tail_servo_, base_pose,
+                             {{0, -6, +12, +2}, 140, 20, EaseCurve::kEaseInOutCubic, 18, 0});
+            RunMotionSegment(head_gimbal_, tail_servo_, base_pose,
+                             {{0, -10, +42, +4}, 240, 35, EaseCurve::kEaseOutQuad, 20, 0});
+            RunMotionSegment(head_gimbal_, tail_servo_, base_pose,
+                             {{0, -7, -42, +3}, 250, 35, EaseCurve::kEaseInOutCubic, 20, 0});
+            RunMotionSegment(head_gimbal_, tail_servo_, base_pose,
+                             {{0, -4, +16, +2}, 220, compact ? 20 : 40, EaseCurve::kEaseInOutCubic, 15, 0});
+        } else if (compact) {
+            RunMotionSegment(head_gimbal_, tail_servo_, base_pose,
+                             {{-6, -12, +14, +3}, 140, 20, EaseCurve::kEaseInOutCubic, 10, 0});
+            RunMotionSegment(head_gimbal_, tail_servo_, base_pose,
+                             {{+4, -18, +32, +5}, 240, 30, EaseCurve::kEaseOutQuad, 15, 0});
+            RunMotionSegment(head_gimbal_, tail_servo_, base_pose,
+                             {{0, -10, -30, +4}, 220, 25, EaseCurve::kEaseInOutCubic, 15, 0});
+            RunMotionSegment(head_gimbal_, tail_servo_, base_pose,
+                             {{0, -5, +12, +2}, 190, 30, EaseCurve::kEaseInOutCubic, 12, 0});
+        } else if (action.level == TouchLevel::kMedium) {
+            RunMotionSegment(head_gimbal_, tail_servo_, base_pose,
+                             {{-8, -14, +18, +4}, 150, 20, EaseCurve::kEaseInOutCubic, 12, 0});
+            RunMotionSegment(head_gimbal_, tail_servo_, base_pose,
+                             {{-14, -26, +55, +6}, 280, 40, EaseCurve::kEaseOutQuad, 18, 0});
+            RunMotionSegment(head_gimbal_, tail_servo_, base_pose,
+                             {{+8, -22, -55, +5}, 300, 35, EaseCurve::kEaseInOutCubic, 22, 0});
+            RunMotionSegment(head_gimbal_, tail_servo_, base_pose,
+                             {{-5, -16, +28, +4}, 260, 30, EaseCurve::kEaseInOutCubic, 18, 0});
+            RunMotionSegment(head_gimbal_, tail_servo_, base_pose,
+                             {{0, -10, -18, +3}, 220, 30, EaseCurve::kEaseInOutCubic, 16, 0});
+        } else {
+            RunMotionSegment(head_gimbal_, tail_servo_, base_pose,
+                             {{-7, -12, +16, +4}, 150, 20, EaseCurve::kEaseInOutCubic, 12, 0});
+            RunMotionSegment(head_gimbal_, tail_servo_, base_pose,
+                             {{-10, -18, +42, +6}, 260, 35, EaseCurve::kEaseOutQuad, 18, 0});
+            RunMotionSegment(head_gimbal_, tail_servo_, base_pose,
+                             {{+6, -16, -42, +5}, 270, 35, EaseCurve::kEaseInOutCubic, 20, 0});
+            RunMotionSegment(head_gimbal_, tail_servo_, base_pose,
+                             {{0, -8, +18, +3}, 220, 35, EaseCurve::kEaseInOutCubic, 14, 0});
+        }
+
+        ApplyPoseSmooth(head_gimbal_, tail_servo_, kServoZeroPose, compact ? 280 : 420,
+                        EaseCurve::kEaseInOutCubic, 0, compact ? 8 : 12);
+    }
+
+    void RunPresetMotion(TouchMotionPreset preset, const ServoPose& base_pose) {
+        switch (preset) {
+            case TouchMotionPreset::kNodYes:
+                RunMotionSegment(head_gimbal_, tail_servo_, base_pose,
+                                 {{0, +4, 0, +1}, 100, 10, EaseCurve::kEaseInOutCubic, 0, 0});
+                RunMotionSegment(head_gimbal_, tail_servo_, base_pose,
+                                 {{0, -18, 0, +2}, 150, 25, EaseCurve::kEaseOutQuad, 0, 0});
+                RunMotionSegment(head_gimbal_, tail_servo_, base_pose,
+                                 {{0, -10, 0, +1}, 120, 15, EaseCurve::kEaseInOutCubic, 0, 0});
+                RunMotionSegment(head_gimbal_, tail_servo_, base_pose,
+                                 {{0, -14, 0, +2}, 130, 20, EaseCurve::kEaseOutQuad, 0, 0});
+                ApplyPoseSmooth(head_gimbal_, tail_servo_, kServoZeroPose, 260, EaseCurve::kEaseInOutCubic, 0, 0);
+                break;
+            case TouchMotionPreset::kShakeNo:
+                RunMotionSegment(head_gimbal_, tail_servo_, base_pose,
+                                 {{-14, -4, 0, 0}, 130, 15, EaseCurve::kEaseInOutCubic, 0, 0});
+                RunMotionSegment(head_gimbal_, tail_servo_, base_pose,
+                                 {{+18, -6, 0, 0}, 170, 20, EaseCurve::kEaseOutQuad, 0, 0});
+                RunMotionSegment(head_gimbal_, tail_servo_, base_pose,
+                                 {{-14, -5, 0, 0}, 160, 20, EaseCurve::kEaseInOutCubic, 0, 0});
+                ApplyPoseSmooth(head_gimbal_, tail_servo_, kServoZeroPose, 260, EaseCurve::kEaseInOutCubic, 0, 0);
+                break;
+            case TouchMotionPreset::kWagTail:
+                RunMotionSegment(head_gimbal_, tail_servo_, base_pose,
+                                 {{0, -2, +18, +2}, 120, 15, EaseCurve::kEaseInOutCubic, 0, 0});
+                RunMotionSegment(head_gimbal_, tail_servo_, base_pose,
+                                 {{0, -3, +48, +3}, 180, 20, EaseCurve::kEaseOutQuad, 0, 0});
+                RunMotionSegment(head_gimbal_, tail_servo_, base_pose,
+                                 {{0, -2, -48, +3}, 200, 20, EaseCurve::kEaseInOutCubic, 0, 0});
+                RunMotionSegment(head_gimbal_, tail_servo_, base_pose,
+                                 {{0, -2, +42, +3}, 180, 20, EaseCurve::kEaseInOutCubic, 0, 0});
+                RunMotionSegment(head_gimbal_, tail_servo_, base_pose,
+                                 {{0, -1, -32, +2}, 170, 15, EaseCurve::kEaseInOutCubic, 0, 0});
+                ApplyPoseSmooth(head_gimbal_, tail_servo_, kServoZeroPose, 260, EaseCurve::kEaseInOutCubic, 0, 0);
+                break;
+            case TouchMotionPreset::kGreetCombo:
+                RunMotionSegment(head_gimbal_, tail_servo_, base_pose,
+                                 {{0, +6, 0, 0}, 110, 10, EaseCurve::kEaseInOutCubic, 0, 0});
+                RunMotionSegment(head_gimbal_, tail_servo_, base_pose,
+                                 {{0, -4, +40, +3}, 180, 20, EaseCurve::kEaseOutQuad, 10, 0});
+                RunMotionSegment(head_gimbal_, tail_servo_, base_pose,
+                                 {{0, -4, -40, +3}, 180, 20, EaseCurve::kEaseInOutCubic, 10, 0});
+                RunMotionSegment(head_gimbal_, tail_servo_, base_pose,
+                                 {{0, -12, +14, +2}, 160, 20, EaseCurve::kEaseOutQuad, 0, 0});
+                ApplyPoseSmooth(head_gimbal_, tail_servo_, kServoZeroPose, 320, EaseCurve::kEaseInOutCubic, 0, 0);
+                break;
+            case TouchMotionPreset::kCalmCombo:
+                RunMotionSegment(head_gimbal_, tail_servo_, base_pose,
+                                 {{0, -6, +16, +1}, 180, 20, EaseCurve::kEaseInOutCubic, 0, 0});
+                RunMotionSegment(head_gimbal_, tail_servo_, base_pose,
+                                 {{0, -6, -16, +1}, 200, 20, EaseCurve::kEaseInOutCubic, 0, 0});
+                RunMotionSegment(head_gimbal_, tail_servo_, base_pose,
+                                 {{0, -8, 0, 0}, 180, 20, EaseCurve::kEaseInOutCubic, 0, 0});
+                ApplyPoseSmooth(head_gimbal_, tail_servo_, kServoZeroPose, 360, EaseCurve::kEaseInOutCubic, 0, 0);
+                break;
+            case TouchMotionPreset::kNone:
+                break;
+        }
+    }
+    bool CanQueueMcpMotion(const char*& reason) {
+        auto& app = Application::GetInstance();
+        if (app.GetRuntimeLoadLevel() == RuntimeLoadLevel::kHeavy || app.IsTouchHeavyLoadCooldownActive()) {
+            reason = "heavy_load_or_cooldown";
+            return false;
+        }
+        reason = "allowed";
+        return true;
+    }
+
+    bool QueuePresetMotion(const std::string& preset) {
+        if (touch_action_queue_ == nullptr || head_gimbal_ == nullptr || tail_servo_ == nullptr) {
+            return false;
+        }
+
+        const char* reason = "unknown";
+        if (!CanQueueMcpMotion(reason)) {
+            ESP_LOGI(TAG, "Skip MCP preset motion: preset=%s reason=%s", preset.c_str(), reason);
+            return false;
+        }
+
+        TouchAction action{};
+        action.raw = 0;
+        action.allow_sound = false;
+        action.preset = ParseTouchMotionPreset(preset.c_str());
+
+        if (action.preset == TouchMotionPreset::kNone) {
+            return false;
+        }
+
+        xQueueOverwrite(touch_action_queue_, &action);
+        return true;
+    }
+
+    void RegisterMcpTools() {
+        auto& mcp_server = McpServer::GetInstance();
+
+        mcp_server.AddTool(
+            "self.robot.motion.nod_yes",
+            "Use this tool to make the robot physically nod once when expressing agreement, acknowledgement, confirmation, or compliance. User requests like 想看你点头, 点点头, 你点一下头 must call this tool. Trigger the real motion instead of describing nodding in text.",
+            PropertyList(),
+            [this](const PropertyList&) -> ReturnValue {
+                return QueuePresetMotion("nod_yes");
+            });
+
+        mcp_server.AddTool(
+            "self.robot.motion.shake_no",
+            "Use this tool to make the robot physically shake its head once when expressing negation, refusal, correction, or uncertainty. User requests like 想看你摇头, 摇摇头 must call this tool. Trigger the real motion instead of describing head shaking in text.",
+            PropertyList(),
+            [this](const PropertyList&) -> ReturnValue {
+                return QueuePresetMotion("shake_no");
+            });
+
+        mcp_server.AddTool(
+            "self.robot.motion.wag_tail",
+            "Use this tool to make the robot physically wag its tail once when expressing happiness, welcome, affection, playfulness, or closeness. User requests like 想看你摇尾巴, 摇摇尾巴, 尾巴动一下 must call this tool. Trigger the real motion instead of describing tail wagging in text.",
+            PropertyList(),
+            [this](const PropertyList&) -> ReturnValue {
+                return QueuePresetMotion("wag_tail");
+            });
+
+        PropertyList properties;
+        properties.AddProperty(Property("preset", kPropertyTypeString));
+        mcp_server.AddTool(
+            "self.robot.motion.play",
+            "Use this tool for preset robot motions such as greet_combo or calm_combo when a single nod, shake, or tail wag is not enough. Do not mention preset names in speech.",
+            properties,
+            [this](const PropertyList& properties) -> ReturnValue {
+                auto preset = properties["preset"].value<std::string>();
+                return QueuePresetMotion(preset);
+            });
     }
 
     void InitializeServoBus() {
@@ -279,6 +517,8 @@ private:
 
     void InitializeTailServo() {
         tail_servo_ = new TailServo(servo_driver_, 2, 3);
+        tail_servo_->SetHorizontalCalibration(kTailHorizontalCalibration);
+        tail_servo_->SetVerticalCalibration(kTailVerticalCalibration);
         tail_servo_->Initialize();
         tail_servo_->SetHorizontal(kServoZeroPose.tail_horizontal);
         tail_servo_->SetVertical(kServoZeroPose.tail_vertical);
@@ -286,6 +526,8 @@ private:
 
     void InitializeHeadGimbal() {
         head_gimbal_ = new HeadGimbal(servo_driver_, 1, 0);
+        head_gimbal_->SetPanCalibration(kHeadPanCalibration);
+        head_gimbal_->SetTiltCalibration(kHeadTiltCalibration);
         head_gimbal_->Initialize();
         head_gimbal_->SetPan(kServoZeroPose.head_pan);
         head_gimbal_->SetTilt(kServoZeroPose.head_tilt);
@@ -330,7 +572,7 @@ private:
         config.fb_location = CAMERA_FB_IN_PSRAM;
         config.grab_mode = CAMERA_GRAB_WHEN_EMPTY;
 
-        camera_ = static_cast<Camera*>(new Esp32Camera(config));
+        camera_ = new Esp32Camera(config);
         camera_->SetVFlip(true);
     }
 
@@ -357,6 +599,7 @@ public:
         InitializeHeadGimbal();
         InitializeTailServo();
         InitializeTouchActionWorker();
+        RegisterMcpTools();
         InitializeCamera();
         display_.Initialize();
         InitializePresenceSensor();

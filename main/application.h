@@ -136,6 +136,8 @@ private:
     bool aborted_ = false;
     bool assets_version_checked_ = false;
     bool play_popup_on_listening_ = false;
+    // 用户体验延迟测量：每轮 TTS 开始时 clear()，收到首个下行音频包时 test_and_set() 只上报一次
+    std::atomic_flag first_audio_reported_ = ATOMIC_FLAG_INIT;
     int clock_ticks_ = 0;
     TaskHandle_t activation_task_handle_ = nullptr;
     std::atomic<int> heavy_load_count_{0};

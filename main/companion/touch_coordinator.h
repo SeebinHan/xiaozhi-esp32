@@ -5,6 +5,7 @@
 #include <functional>
 
 #include "device_state.h"
+#include "boards/topsky-robot/motion_math.h"
 
 enum class TouchLevel {
     kNone = 0,
@@ -30,6 +31,7 @@ struct TouchAction {
     TouchMotionMode motion = TouchMotionMode::kNone;
     bool allow_sound = false;
     bool compact_motion = false;
+    TouchMotionPreset preset = TouchMotionPreset::kNone;
 };
 
 class TouchCoordinatorHost {

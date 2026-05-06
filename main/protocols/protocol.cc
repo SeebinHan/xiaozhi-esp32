@@ -79,11 +79,23 @@ void Protocol::SendMcpMessage(const std::string& payload) {
     SendText(message);
 }
 
-void Protocol::SendProactiveGreetingRequest(const std::string& text) {
+void Protocol::SendProactiveGreetingRequest(const std::string& scene_summary) {
     cJSON* msg = cJSON_CreateObject();
     cJSON_AddStringToObject(msg, "session_id", session_id_.c_str());
     cJSON_AddStringToObject(msg, "type", "proactive_greeting_request");
-    cJSON_AddStringToObject(msg, "text", text.c_str());
+    cJSON_AddBoolToObject(msg, "person_present", true);
+    cJSON_AddStringToObject(msg, "scene_summary", scene_summary.c_str());
+    char* json_str = cJSON_PrintUnformatted(msg);
+    SendText(json_str);
+    free(json_str);
+    cJSON_Delete(msg);
+}
+
+void Protocol::SendClientMetricsFirstAudioPlay() {
+    cJSON* msg = cJSON_CreateObject();
+    cJSON_AddStringToObject(msg, "session_id", session_id_.c_str());
+    cJSON_AddStringToObject(msg, "type", "client_metrics");
+    cJSON_AddStringToObject(msg, "event", "first_audio_play");
     char* json_str = cJSON_PrintUnformatted(msg);
     SendText(json_str);
     free(json_str);

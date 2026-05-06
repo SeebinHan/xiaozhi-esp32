@@ -186,28 +186,28 @@ void PresenceCoordinator::StartGreetingVisionTask() {
     }
 }
 
-bool PresenceCoordinator::ParseGreetingDecision(const std::string& response, std::string& greet_text) const {
+bool PresenceCoordinator::ParseGreetingDecision(const std::string& response, std::string& scene_summary) const {
     cJSON* root = cJSON_Parse(response.c_str());
     if (root == nullptr) {
         ESP_LOGW(TAG, "Presence greeting: failed to parse response");
         return false;
     }
 
-    bool should_greet = false;
+    bool person_present = false;
     double confidence = 0.0;
     std::string reason_code;
 
-    auto* item = cJSON_GetObjectItem(root, "should_greet");
+    auto* item = cJSON_GetObjectItem(root, "person_present");
     if (cJSON_IsBool(item)) {
-        should_greet = cJSON_IsTrue(item);
+        person_present = cJSON_IsTrue(item);
     }
     item = cJSON_GetObjectItem(root, "confidence");
     if (cJSON_IsNumber(item)) {
         confidence = item->valuedouble;
     }
-    item = cJSON_GetObjectItem(root, "greet_text");
+    item = cJSON_GetObjectItem(root, "scene_summary");
     if (cJSON_IsString(item)) {
-        greet_text = item->valuestring;
+        scene_summary = item->valuestring;
     }
     item = cJSON_GetObjectItem(root, "reason_code");
     if (cJSON_IsString(item)) {
@@ -215,26 +215,26 @@ bool PresenceCoordinator::ParseGreetingDecision(const std::string& response, std
     }
     cJSON_Delete(root);
 
-    ESP_LOGI(TAG, "Greeting vision: greet=%d conf=%.2f reason=%s text=%s",
-             should_greet, confidence, reason_code.c_str(), greet_text.c_str());
+    ESP_LOGI(TAG, "Greeting vision: person_present=%d conf=%.2f reason=%s scene=%s",
+             person_present, confidence, reason_code.c_str(), scene_summary.c_str());
 
-    if (!should_greet || confidence < kMinGreetingConfidence || greet_text.empty()) {
+    if (!person_present || confidence < kMinGreetingConfidence || scene_summary.empty()) {
         return false;
     }
-    if (greet_text.size() > kMaxGreetingTextLength) {
-        greet_text.resize(kMaxGreetingTextLength);
+    if (scene_summary.size() > kMaxGreetingTextLength) {
+        scene_summary.resize(kMaxGreetingTextLength);
     }
     return true;
 }
 
-void PresenceCoordinator::QueueOrSendGreeting(const std::string& greet_text) {
-    host_.SchedulePresence([this, greet_text]() {
+void PresenceCoordinator::QueueOrSendGreeting(const std::string& scene_summary) {
+    host_.SchedulePresence([this, scene_summary]() {
         if (host_.GetPresenceDeviceState() != kDeviceStateIdle) {
             ResetGreetingState();
             return;
         }
 
-        pending_greeting_text_ = greet_text;
+        pending_greeting_text_ = scene_summary;
         if (host_.IsPresenceAudioChannelOpened()) {
             std::string text = std::move(pending_greeting_text_);
             pending_greeting_text_.clear();

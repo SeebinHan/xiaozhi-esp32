@@ -18,15 +18,31 @@ float TailServo::AngleToPulseUs(int angle) const {
 }
 
 void TailServo::SetHorizontal(int angle) {
-    h_angle_ = angle;
     if (!driver_) return;
-    driver_->SetServoPulse(ch_h_, AngleToPulseUs(angle));
+    int calibrated = ApplyCalibration(angle, horizontal_calibration_);
+    if (!NeedsServoWrite(last_written_horizontal_, calibrated, horizontal_calibration_.deadband_deg)) {
+        UpdateCachedAngleOnWriteResult(h_angle_, angle, true);
+        return;
+    }
+    bool write_success = driver_->SetServoPulse(ch_h_, AngleToPulseUs(calibrated));
+    UpdateCachedAngleOnWriteResult(h_angle_, angle, write_success);
+    if (write_success) {
+        last_written_horizontal_ = calibrated;
+    }
 }
 
 void TailServo::SetVertical(int angle) {
-    v_angle_ = angle;
     if (!driver_) return;
-    driver_->SetServoPulse(ch_v_, AngleToPulseUs(angle));
+    int calibrated = ApplyCalibration(angle, vertical_calibration_);
+    if (!NeedsServoWrite(last_written_vertical_, calibrated, vertical_calibration_.deadband_deg)) {
+        UpdateCachedAngleOnWriteResult(v_angle_, angle, true);
+        return;
+    }
+    bool write_success = driver_->SetServoPulse(ch_v_, AngleToPulseUs(calibrated));
+    UpdateCachedAngleOnWriteResult(v_angle_, angle, write_success);
+    if (write_success) {
+        last_written_vertical_ = calibrated;
+    }
 }
 
 void TailServo::SetAngle(int angle) {

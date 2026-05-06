@@ -22,7 +22,7 @@ public:
     virtual bool OpenPresenceAudioChannel() = 0;
     virtual void ClosePresenceAudioChannel(bool send_goodbye) = 0;
     virtual std::string CapturePresenceGreetingDecision() = 0;
-    virtual void SendPresenceGreetingText(const std::string& text) = 0;
+    virtual void SendPresenceGreetingText(const std::string& scene_summary) = 0;
     virtual void SchedulePresence(std::function<void()>&& callback) = 0;
     virtual bool IsHeavyLoadCooldownActiveForPresence() const = 0;
 };
@@ -41,8 +41,8 @@ private:
     bool BeginBootstrapVisionRetry(const char* source);
     void MaybeLogSkippedDetection(const char* reason);
     void StartGreetingVisionTask();
-    bool ParseGreetingDecision(const std::string& response, std::string& greet_text) const;
-    void QueueOrSendGreeting(const std::string& greet_text);
+    bool ParseGreetingDecision(const std::string& response, std::string& scene_summary) const;
+    void QueueOrSendGreeting(const std::string& scene_summary);
     void ResetGreetingState();
 
     PresenceCoordinatorHost& host_;
