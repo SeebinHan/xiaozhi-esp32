@@ -64,7 +64,9 @@ bool WebsocketProtocol::SendText(const std::string& text) {
 
     if (!websocket_->Send(text)) {
         ESP_LOGE(TAG, "Failed to send text: %s", text.c_str());
-        SetError(Lang::Strings::SERVER_ERROR);
+        if (!best_effort_send_) {
+            SetError(Lang::Strings::SERVER_ERROR);
+        }
         return false;
     }
 

@@ -93,6 +93,7 @@ protected:
     int server_sample_rate_ = 24000;
     int server_frame_duration_ = 60;
     bool error_occurred_ = false;
+    bool best_effort_send_ = false;  // 抑制 SetError：用于上报式发送（client_metrics 等可丢失）
     std::string session_id_;
     uint64_t last_incoming_time_ms_ = 0;
 

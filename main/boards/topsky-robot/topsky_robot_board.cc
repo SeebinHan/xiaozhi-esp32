@@ -592,9 +592,26 @@ private:
         xTaskCreate(TouchPollTask, "touch_poll", 4096, g_touch_sensor, 3, nullptr);
     }
 
+    void Enable4GModule() {
+        if (ML307_EN_PIN == GPIO_NUM_NC) {
+            return;
+        }
+        gpio_config_t en_cfg = {};
+        en_cfg.pin_bit_mask = 1ULL << ML307_EN_PIN;
+        en_cfg.mode = GPIO_MODE_OUTPUT;
+        en_cfg.pull_up_en = GPIO_PULLUP_DISABLE;
+        en_cfg.pull_down_en = GPIO_PULLDOWN_DISABLE;
+        en_cfg.intr_type = GPIO_INTR_DISABLE;
+        ESP_ERROR_CHECK(gpio_config(&en_cfg));
+        gpio_set_level(ML307_EN_PIN, 1);
+        ESP_LOGI(TAG, "ML307 EN GPIO%d set high", ML307_EN_PIN);
+        vTaskDelay(pdMS_TO_TICKS(3000));
+    }
+
 public:
     TopskyRobotBoard()
-        : DualNetworkBoard(ML307_TX_PIN, ML307_RX_PIN, ML307_DTR_PIN, 0) {
+        : DualNetworkBoard(ML307_TX_PIN, ML307_RX_PIN, ML307_DTR_PIN, 1) {
+        Enable4GModule();
         InitializeServoBus();
         InitializeHeadGimbal();
         InitializeTailServo();

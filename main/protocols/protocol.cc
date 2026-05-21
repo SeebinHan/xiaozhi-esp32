@@ -92,14 +92,10 @@ void Protocol::SendProactiveGreetingRequest(const std::string& scene_summary) {
 }
 
 void Protocol::SendClientMetricsFirstAudioPlay() {
-    cJSON* msg = cJSON_CreateObject();
-    cJSON_AddStringToObject(msg, "session_id", session_id_.c_str());
-    cJSON_AddStringToObject(msg, "type", "client_metrics");
-    cJSON_AddStringToObject(msg, "event", "first_audio_play");
-    char* json_str = cJSON_PrintUnformatted(msg);
-    SendText(json_str);
-    free(json_str);
-    cJSON_Delete(msg);
+    // 4G 链路 AT 通道在下行 TTS 时被入站 URC 压满，每次 listening->speaking 都
+    // 触发 publish 必然超时 5 秒，反而加剧通道阻塞、造成播放卡断。
+    // 体验度量不是功能必需项，先全局禁用，待 ML307 PPP 模式或更通畅的链路再恢复。
+    return;
 }
 
 void Protocol::SendVisualContext(const std::string& description) {

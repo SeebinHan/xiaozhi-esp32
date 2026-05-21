@@ -1,5 +1,6 @@
 tmp/
-components/
+components/*
+!components/esp-ml307/
 managed_components/
 build/
 dist/

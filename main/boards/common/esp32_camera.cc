@@ -251,27 +251,39 @@ std::string Esp32Camera::Explain(const std::string &question) {
         http->SetHeader("Authorization", "Bearer " + explain_token_);
     }
 
-    std::string body;
-    body.reserve(question.size() + jpeg_data.size() + 512);
-    body += "--" + boundary + "\r\n";
-    body += "Content-Disposition: form-data; name=\"question\"\r\n";
-    body += "\r\n";
-    body += question + "\r\n";
-    body += "--" + boundary + "\r\n";
-    body += "Content-Disposition: form-data; name=\"file\"; filename=\"camera.jpg\"\r\n";
-    body += "Content-Type: image/jpeg\r\n";
-    body += "\r\n";
-    body.append(jpeg_data.data(), jpeg_data.size());
-    body += "\r\n--" + boundary + "--\r\n";
-
     http->SetHeader("Content-Type", "multipart/form-data; boundary=" + boundary);
-    http->SetHeader("Content-Length", std::to_string(body.size()));
-    http->SetContent(std::move(body));
+    // ML307R 的 Content-Length 单包上限 ~4KB，body > 4KB 必须用 chunked。
+    // 把整个 multipart 切成多次 Write，与 esp_video.cc / sscma_camera.cc 保持一致。
+    http->SetHeader("Transfer-Encoding", "chunked");
     if (!http->Open("POST", explain_url_)) {
         ESP_LOGE(TAG, "Failed to connect to explain URL");
         finish_explain(false);
         return "";
     }
+
+    {
+        std::string question_field;
+        question_field += "--" + boundary + "\r\n";
+        question_field += "Content-Disposition: form-data; name=\"question\"\r\n";
+        question_field += "\r\n";
+        question_field += question + "\r\n";
+        http->Write(question_field.c_str(), question_field.size());
+    }
+    {
+        std::string file_header;
+        file_header += "--" + boundary + "\r\n";
+        file_header += "Content-Disposition: form-data; name=\"file\"; filename=\"camera.jpg\"\r\n";
+        file_header += "Content-Type: image/jpeg\r\n";
+        file_header += "\r\n";
+        http->Write(file_header.c_str(), file_header.size());
+    }
+    http->Write(jpeg_data.data(), jpeg_data.size());
+    {
+        std::string multipart_footer = "\r\n--" + boundary + "--\r\n";
+        http->Write(multipart_footer.c_str(), multipart_footer.size());
+    }
+    // chunked 终止块
+    http->Write("", 0);
 
     if (http->GetStatusCode() != 200) {
         ESP_LOGE(TAG, "Failed to upload photo, status code: %d", http->GetStatusCode());
